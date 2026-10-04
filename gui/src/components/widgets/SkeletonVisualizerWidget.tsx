@@ -68,7 +68,8 @@ export type SkeletonPreviewView = {
 };
 
 type RetargetMarker = {
-  disc: Mesh;
+  sourceDisc: Mesh;
+  targetDisc: Mesh;
   line: Line;
 };
 
@@ -146,8 +147,20 @@ function initializePreview(
     const existing = retargetMarkers.get(role);
     if (existing) return existing;
 
-    const disc = new Mesh(
-      new CylinderGeometry(0.055, 0.055, 0.012, 32),
+    const sourceDisc = new Mesh(
+      new CylinderGeometry(0.045, 0.045, 0.008, 32),
+      new MeshBasicMaterial({
+        transparent: true,
+        opacity: 0.42,
+        side: DoubleSide,
+        depthTest: false,
+        wireframe: true,
+      })
+    );
+    sourceDisc.renderOrder = 9;
+
+    const targetDisc = new Mesh(
+      new CylinderGeometry(0.058, 0.058, 0.012, 32),
       new MeshBasicMaterial({
         transparent: true,
         opacity: 0.68,
@@ -155,7 +168,7 @@ function initializePreview(
         depthTest: false,
       })
     );
-    disc.renderOrder = 10;
+    targetDisc.renderOrder = 11;
 
     const line = new Line(
       new BufferGeometry(),
@@ -165,12 +178,13 @@ function initializePreview(
         depthTest: false,
       })
     );
-    line.renderOrder = 9;
+    line.renderOrder = 10;
 
     retargetGroup.add(line);
-    retargetGroup.add(disc);
+    retargetGroup.add(sourceDisc);
+    retargetGroup.add(targetDisc);
 
-    const marker = { disc, line };
+    const marker = { sourceDisc, targetDisc, line };
     retargetMarkers.set(role, marker);
     return marker;
   };
@@ -180,10 +194,14 @@ function initializePreview(
     bones: Map<BodyPart, BoneT>,
     config?: TrackerRetargetConfig,
     selectedRole?: TrackerRetargetRole,
-    visible = false
+    showSourceTargets = false,
+    showRetargetTargets = false,
+    showDisplacementLines = true,
+    previewConfiguredOffsets = true
   ) => {
-    retargetGroup.visible = visible;
-    if (!visible) return;
+    retargetGroup.visible =
+      showSourceTargets || showRetargetTargets || showDisplacementLines;
+    if (!retargetGroup.visible) return;
 
     const hipRotation = QuaternionFromQuatT(
       bones.get(BodyPart.HIP)?.rotationG
@@ -199,8 +217,10 @@ function initializePreview(
         (candidate) =>
           candidate.info?.bodyPart === bodyPart && candidate.position
       );
+
       if (!tracker?.position) {
-        marker.disc.visible = false;
+        marker.sourceDisc.visible = false;
+        marker.targetDisc.visible = false;
         marker.line.visible = false;
         continue;
       }
@@ -211,9 +231,12 @@ function initializePreview(
         tracker.position.z ?? 0
       );
       const target = source.clone();
-
       const adjustment = config?.trackers[role];
-      if (config?.enabled && adjustment?.enabled) {
+      const applyConfiguredOffset =
+        adjustment?.enabled &&
+        (previewConfiguredOffsets || config?.enabled === true);
+
+      if (applyConfiguredOffset && adjustment) {
         const offset = new Vector3(
           adjustment.x,
           adjustment.y,
@@ -225,24 +248,35 @@ function initializePreview(
         target.add(offset);
       }
 
-      marker.disc.visible = true;
-      marker.line.visible = true;
-      marker.disc.position.copy(target);
-
       const trackerRotation =
         tracker.rotationIdentityAdjusted ?? tracker.rotation;
-      if (trackerRotation) {
-        marker.disc.quaternion.copy(QuaternionFromQuatT(trackerRotation));
-      } else {
-        marker.disc.quaternion.identity();
-      }
+      const targetRotation = trackerRotation
+        ? QuaternionFromQuatT(trackerRotation)
+        : new Quaternion().identity();
 
       const selected = role === selectedRole;
-      const material = marker.disc.material as MeshBasicMaterial;
-      material.color.set(selected ? 0xffd54a : 0x44e4ff);
-      material.opacity = selected ? 0.92 : 0.62;
-      marker.disc.scale.setScalar(selected ? 1.35 : 1);
 
+      marker.sourceDisc.visible = showSourceTargets;
+      marker.sourceDisc.position.copy(source);
+      marker.sourceDisc.quaternion.copy(targetRotation);
+      marker.sourceDisc.scale.setScalar(selected ? 1.18 : 1);
+      const sourceMaterial = marker.sourceDisc.material as MeshBasicMaterial;
+      sourceMaterial.color.set(selected ? 0xffffff : 0xaab2c0);
+      sourceMaterial.opacity = selected ? 0.8 : 0.42;
+
+      marker.targetDisc.visible = showRetargetTargets;
+      marker.targetDisc.position.copy(target);
+      marker.targetDisc.quaternion.copy(targetRotation);
+      marker.targetDisc.scale.setScalar(selected ? 1.35 : 1);
+      const targetMaterial = marker.targetDisc.material as MeshBasicMaterial;
+      targetMaterial.color.set(selected ? 0xffd54a : 0x44e4ff);
+      targetMaterial.opacity = selected ? 0.92 : 0.62;
+
+      marker.line.visible =
+        showDisplacementLines &&
+        showSourceTargets &&
+        showRetargetTargets &&
+        !!adjustment?.enabled;
       const lineMaterial = marker.line.material as LineBasicMaterial;
       lineMaterial.color.set(selected ? 0xffd54a : 0x44e4ff);
       marker.line.geometry.setFromPoints([source, target]);
@@ -361,9 +395,11 @@ function initializePreview(
     destroy: () => {
       cancelAnimationFrame(animationFrameId);
       skeletonHelper.dispose();
-      retargetMarkers.forEach(({ disc, line }) => {
-        disc.geometry.dispose();
-        (disc.material as MeshBasicMaterial).dispose();
+      retargetMarkers.forEach(({ sourceDisc, targetDisc, line }) => {
+        sourceDisc.geometry.dispose();
+        (sourceDisc.material as MeshBasicMaterial).dispose();
+        targetDisc.geometry.dispose();
+        (targetDisc.material as MeshBasicMaterial).dispose();
         line.geometry.dispose();
         (line.material as LineBasicMaterial).dispose();
       });
@@ -440,13 +476,19 @@ function SkeletonVisualizer({
   disabled = false,
   retargetConfig,
   selectedRetargetRole,
+  showSourceTargets = false,
   showRetargetTargets = false,
+  showDisplacementLines = true,
+  previewConfiguredOffsets = true,
 }: {
   onInit: (context: PreviewContext) => void;
   disabled?: boolean;
   retargetConfig?: TrackerRetargetConfig;
   selectedRetargetRole?: TrackerRetargetRole;
+  showSourceTargets?: boolean;
   showRetargetTargets?: boolean;
+  showDisplacementLines?: boolean;
+  previewConfiguredOffsets?: boolean;
 }) {
   const { config } = useConfig();
 
@@ -482,14 +524,20 @@ function SkeletonVisualizer({
       bones,
       retargetConfig,
       selectedRetargetRole,
-      showRetargetTargets
+      showSourceTargets,
+      showRetargetTargets,
+      showDisplacementLines,
+      previewConfiguredOffsets
     );
   }, [
     computedTrackers,
     bones,
     retargetConfig,
     selectedRetargetRole,
+    showSourceTargets,
     showRetargetTargets,
+    showDisplacementLines,
+    previewConfiguredOffsets,
     disabled,
   ]);
 
@@ -571,14 +619,20 @@ export function SkeletonVisualizerWidget({
   toggleDisabled,
   retargetConfig,
   selectedRetargetRole,
+  showSourceTargets = false,
   showRetargetTargets = false,
+  showDisplacementLines = true,
+  previewConfiguredOffsets = true,
 }: {
   onInit?: (context: PreviewContext) => void;
   disabled?: boolean;
   toggleDisabled?: () => void;
   retargetConfig?: TrackerRetargetConfig;
   selectedRetargetRole?: TrackerRetargetRole;
+  showSourceTargets?: boolean;
   showRetargetTargets?: boolean;
+  showDisplacementLines?: boolean;
+  previewConfiguredOffsets?: boolean;
 }) {
   const { l10n } = useLocalization();
   const [error, setError] = useState(false);
@@ -596,7 +650,10 @@ export function SkeletonVisualizerWidget({
             disabled={disabled}
             retargetConfig={retargetConfig}
             selectedRetargetRole={selectedRetargetRole}
+            showSourceTargets={showSourceTargets}
             showRetargetTargets={showRetargetTargets}
+            showDisplacementLines={showDisplacementLines}
+            previewConfiguredOffsets={previewConfiguredOffsets}
           />
         </ErrorBoundary>
       </div>
