@@ -132,6 +132,11 @@ export function SpringBonesSettings({
             distance: 0.03,
             strength: 12,
             pull: 0.65,
+            derivativeDriverEnabled: false,
+            accelerationWeight: 0.2,
+            jerkWeight: 0.7,
+            snapWeight: 0.1,
+            derivativeResponse: 0.55,
           },
         ])
       ) as TrackerRetargetConfig['springBones'],
@@ -228,6 +233,11 @@ export function SpringBonesSettings({
                     distance: 0.03,
                     strength: 12,
                     pull: 0.65,
+                    derivativeDriverEnabled: false,
+                    accelerationWeight: 0.2,
+                    jerkWeight: 0.7,
+                    snapWeight: 0.1,
+                    derivativeResponse: 0.55,
                   })
                 )
               }
@@ -312,6 +322,131 @@ export function SpringBonesSettings({
             Motion coupling. Higher pull converts more of a sudden body motion
             into spring velocity. At zero, movement cannot kick the spring.
           </Typography>
+
+          <div className="bg-background-60 rounded-lg p-3 flex flex-col gap-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-col gap-1">
+                <Typography variant="section-title">
+                  Derivative motion driver
+                </Typography>
+                <Typography color="secondary">
+                  Shape the IMU impulse from filtered acceleration, jerk
+                  (first derivative), and snap (second derivative).
+                </Typography>
+              </div>
+              <Button
+                variant="secondary"
+                onClick={() =>
+                  updateConfig(
+                    withSpring(config, selectedRole, {
+                      accelerationWeight: 0.2,
+                      jerkWeight: 0.7,
+                      snapWeight: 0.1,
+                      derivativeResponse: 0.55,
+                    })
+                  )
+                }
+              >
+                Reset 20 / 70 / 10
+              </Button>
+            </div>
+
+            <CheckboxInternal
+              name={`spring-${selectedRole}-derivative-driver`}
+              variant="toggle"
+              outlined
+              label="Use acceleration derivative motion driver"
+              checked={spring.derivativeDriverEnabled}
+              disabled={!config.springBonesUseAcceleration}
+              onChange={(event) =>
+                updateConfig(
+                  withSpring(config, selectedRole, {
+                    derivativeDriverEnabled: event.currentTarget.checked,
+                  })
+                )
+              }
+            />
+
+            {!config.springBonesUseAcceleration && (
+              <Typography color="secondary">
+                Enable “Use physical IMU accelerometer when available” above
+                before the derivative driver can be used.
+              </Typography>
+            )}
+
+            {spring.derivativeDriverEnabled &&
+              config.springBonesUseAcceleration && (
+                <>
+                  <RangeControl
+                    label="Motion response"
+                    value={spring.derivativeResponse}
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    onChange={(derivativeResponse) =>
+                      updateConfig(
+                        withSpring(config, selectedRole, {
+                          derivativeResponse,
+                        })
+                      )
+                    }
+                  />
+                  <div className="flex justify-between gap-3">
+                    <Typography color="secondary">Smoother</Typography>
+                    <Typography color="secondary">More reactive</Typography>
+                  </div>
+                  <Typography color="secondary">
+                    Changes derivative filter bandwidth and characteristic time.
+                    Higher response reacts to shorter transients; lower response
+                    suppresses more high-frequency IMU noise.
+                  </Typography>
+
+                  <RangeControl
+                    label="Acceleration influence"
+                    value={spring.accelerationWeight}
+                    min={0}
+                    max={2}
+                    step={0.05}
+                    onChange={(accelerationWeight) =>
+                      updateConfig(
+                        withSpring(config, selectedRole, {
+                          accelerationWeight,
+                        })
+                      )
+                    }
+                  />
+                  <RangeControl
+                    label="Jerk influence"
+                    value={spring.jerkWeight}
+                    min={0}
+                    max={2}
+                    step={0.05}
+                    onChange={(jerkWeight) =>
+                      updateConfig(
+                        withSpring(config, selectedRole, { jerkWeight })
+                      )
+                    }
+                  />
+                  <RangeControl
+                    label="Snap influence"
+                    value={spring.snapWeight}
+                    min={0}
+                    max={2}
+                    step={0.05}
+                    onChange={(snapWeight) =>
+                      updateConfig(
+                        withSpring(config, selectedRole, { snapWeight })
+                      )
+                    }
+                  />
+                  <Typography color="secondary">
+                    These three values are normalized as relative influences.
+                    Jerk can dominate transitions without sustained
+                    acceleration continuously pumping the spring.
+                  </Typography>
+                </>
+              )}
+          </div>
 
           {oppositeRole && (
             <Button variant="secondary" onClick={copyToOpposite}>
