@@ -8,6 +8,7 @@ import dev.slimevr.bridge.ISteamVRBridge
 import dev.slimevr.config.BridgeConfig
 import dev.slimevr.desktop.platform.ProtobufMessages.*
 import dev.slimevr.protocol.rpc.settings.RPCSettingsHandler
+import dev.slimevr.tracking.processor.retarget.TrackerPositionRetargeter
 import dev.slimevr.tracking.trackers.DeviceOrigin
 import dev.slimevr.tracking.trackers.Tracker
 import dev.slimevr.tracking.trackers.TrackerPosition
@@ -19,6 +20,8 @@ import dev.slimevr.util.ann.VRServerThread
 import io.eiren.util.OperatingSystem
 import io.eiren.util.collections.FastList
 import io.eiren.util.logging.LogManager
+import io.github.axisangles.ktmath.Vector3
+import io.github.axisangles.ktmath.Vector3.Companion.POS_Y
 import java.nio.file.Path
 import kotlin.io.path.Path
 import kotlin.io.path.exists
@@ -112,6 +115,34 @@ abstract class SteamVRBridge(
 	private var bindingsProviderManager: BindingsProviderManager? = null
 	protected val config: BridgeConfig = server.configManager.vrConfig.getBridge(bridgeSettingsKey)
 	var connected: Boolean = false
+
+	/**
+	 * Apply avatar/game-space position retargeting only at the SteamVR export
+	 * boundary. The local computed tracker object, skeleton bones, leg tweaks,
+	 * and tracker quaternion are left untouched.
+	 */
+	@VRServerThread
+	override fun getTrackerOutputPosition(localTracker: Tracker): Vector3 {
+		if (!config.positionRetargetingEnabled || !localTracker.hasPosition) {
+			return super.getTrackerOutputPosition(localTracker)
+		}
+
+		val role = localTracker.trackerPosition?.trackerRole
+			?: return super.getTrackerOutputPosition(localTracker)
+		val adjustment = config.getTrackerPositionOffset(role)
+			?: return super.getTrackerOutputPosition(localTracker)
+
+		val bodyYaw = server.humanPoseManager.skeleton.hipBone
+			.getGlobalRotation()
+			.project(POS_Y)
+			.unit()
+
+		return TrackerPositionRetargeter.apply(
+			localTracker.position,
+			bodyYaw,
+			adjustment,
+		)
+	}
 
 	@VRServerThread
 	override fun startBridge() {
