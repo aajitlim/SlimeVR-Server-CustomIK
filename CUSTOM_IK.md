@@ -188,6 +188,132 @@ vertical acceleration changes to produce a stronger spring reaction.
 
 At `0`, body motion cannot kick the spring.
 
+### IMU accelerometer-driven Spring Bones
+
+Spring Bones can now optionally use the physical tracker's IMU acceleration as
+their fast motion driver.
+
+The Spring Bones tab exposes:
+
+- **Use physical IMU accelerometer when available**
+
+When this toggle is disabled, the spring uses the original solved-position
+driver:
+
+```text
+solved Y position
+    |
+    v
+derived vertical velocity
+    |
+    v
+change in velocity
+    |
+    v
+spring impulse
+```
+
+When the toggle is enabled, each exported role tries to find the nearest usable
+physical IMU assigned to that body point.
+
+Examples:
+
+- Chest prefers chest, then upper-chest, waist, and hip IMUs.
+- Hip / Waist prefers hip, then waist, chest, and upper-chest IMUs.
+- Knee points prefer the corresponding lower-leg / upper-leg IMUs.
+- Foot points prefer the corresponding foot / lower-leg IMUs.
+- Elbow and hand points use the nearest corresponding arm/hand IMUs.
+
+If no usable acceleration sample is available for a role, that role
+automatically falls back to the solved-position driver. Enabling accelerometer
+mode therefore cannot make a Spring Bone stop working simply because one body
+point lacks acceleration data.
+
+The physical tracker acceleration is obtained through SlimeVR's existing
+`Tracker.getAcceleration()` path. This transforms the raw IMU acceleration
+into SlimeVR/world reference space.
+
+The existing SlimeVR code notes that this reference-space acceleration can
+retain an unknown heading/yaw offset. Spring Bones only consume the world
+**Y-axis** component, so heading/yaw ambiguity does not alter the vertical
+component used by this feature.
+
+#### Gravity and sensor-bias removal
+
+Raw IMU acceleration is not treated as gravity-free linear acceleration.
+
+The Spring Bone processor maintains a slowly adapting Y-axis baseline and
+subtracts it from the current acceleration sample:
+
+```text
+world/reference accel Y
+        |
+        +------ slow baseline ------> gravity + stationary bias
+        |
+        v
+current Y - baseline
+        |
+        v
+dynamic vertical acceleration
+```
+
+The baseline initializes from the first valid acceleration sample, preventing an
+immediate kick when accelerometer mode is enabled.
+
+The dynamic signal then passes through:
+
+- a small stationary-noise deadzone,
+- a bounded +/- acceleration clamp,
+- a fast low-pass filter.
+
+The processor also normalizes the dynamic signal against the observed static
+gravity scale. This makes the spring driver more tolerant of tracker transports
+that represent acceleration with slightly different numeric scaling.
+
+#### Hybrid driver
+
+Accelerometer mode does not replace the solved position.
+
+The solved tracker position remains the authoritative spring center/rest point.
+
+The IMU contributes only transient excitation:
+
+```text
+physical IMU acceleration
+        |
+        v
+gravity/bias removal
+        |
+        v
+filtered dynamic Y acceleration
+        |
+        v
+velocity impulse
+        |
+        +--------------------+
+                             |
+solved tracker position -----+----> bounded Spring Bone ----> SteamVR Y
+```
+
+A small fraction of the solved-position derivative remains active as a
+stabilizing cross-check while the IMU supplies the high-frequency motion.
+
+The system never integrates accelerometer data into absolute tracker position.
+This avoids the drift that would occur with double integration.
+
+In practical terms:
+
+- the solved SlimeVR point controls **where the spring belongs**,
+- the accelerometer controls **how sharply motion excites it**,
+- spring distance still controls the hard positional limit,
+- strength still controls return stiffness,
+- pull now controls how strongly measured acceleration excites the oscillator.
+
+The close-up renderer displays the selected driver mode as either:
+
+- **IMU preferred + fallback**, or
+- **Position derived**.
+
 ### Spring motion model
 
 The Spring Bone system is impulse-driven rather than being a simple positional
