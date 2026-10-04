@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type RefObject } from 'react';
 import {
   BufferGeometry,
   CylinderGeometry,
@@ -36,6 +36,34 @@ function lerp(from: number, to: number, t: number) {
 function softClampDrive(value: number) {
   const limit = 3;
   return limit * Math.tanh(value / limit);
+}
+
+function PreviewMeter({
+  label,
+  barRef,
+  textRef,
+  color,
+}: {
+  label: string;
+  barRef: RefObject<HTMLDivElement>;
+  textRef: RefObject<HTMLSpanElement>;
+  color: string;
+}) {
+  return (
+    <div className="grid grid-cols-[100px_1fr_58px] items-center gap-2">
+      <Typography>{label}</Typography>
+      <div className="h-2 rounded overflow-hidden bg-background-80">
+        <div
+          ref={barRef}
+          className="h-full rounded"
+          style={{ width: '0%', backgroundColor: color }}
+        />
+      </div>
+      <span ref={textRef} className="text-right text-sm">
+        +0.00
+      </span>
+    </div>
+  );
 }
 
 export function SpringBoneCloseupWidget({
@@ -462,29 +490,30 @@ export function SpringBoneCloseupWidget({
           spring.
         </Typography>
 
-        {[
-          ['Acceleration', accelerationBarRef, accelerationTextRef, '#44e4ff'],
-          ['Jerk', jerkBarRef, jerkTextRef, '#ff67d8'],
-          ['Snap', snapBarRef, snapTextRef, '#ffd54a'],
-          ['Combined drive', driveBarRef, driveTextRef, '#ffffff'],
-        ].map(([label, barRef, textRef, color]) => (
-          <div key={label as string} className="grid grid-cols-[100px_1fr_58px] items-center gap-2">
-            <Typography>{label as string}</Typography>
-            <div className="h-2 rounded overflow-hidden bg-background-80">
-              <div
-                ref={(barRef as React.RefObject<HTMLDivElement>).current ? undefined : barRef as React.RefObject<HTMLDivElement>}
-                className="h-full rounded"
-                style={{ width: '0%', backgroundColor: color as string }}
-              />
-            </div>
-            <span
-              ref={(textRef as React.RefObject<HTMLSpanElement>).current ? undefined : textRef as React.RefObject<HTMLSpanElement>}
-              className="text-right text-sm"
-            >
-              +0.00
-            </span>
-          </div>
-        ))}
+        <PreviewMeter
+          label="Acceleration"
+          barRef={accelerationBarRef}
+          textRef={accelerationTextRef}
+          color="#44e4ff"
+        />
+        <PreviewMeter
+          label="Jerk"
+          barRef={jerkBarRef}
+          textRef={jerkTextRef}
+          color="#ff67d8"
+        />
+        <PreviewMeter
+          label="Snap"
+          barRef={snapBarRef}
+          textRef={snapTextRef}
+          color="#ffd54a"
+        />
+        <PreviewMeter
+          label="Combined drive"
+          barRef={driveBarRef}
+          textRef={driveTextRef}
+          color="#ffffff"
+        />
       </div>
     </div>
   );
