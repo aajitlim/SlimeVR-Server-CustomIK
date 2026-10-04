@@ -157,6 +157,14 @@ const defaultBoneComplianceSegment = (
         extensionLimit: 0.02,
         sensorInfluence: 0.5,
       };
+    default:
+      return {
+        enabled: false,
+        compliance: 0,
+        compressionLimit: 0,
+        extensionLimit: 0,
+        sensorInfluence: 0,
+      };
   }
 };
 
