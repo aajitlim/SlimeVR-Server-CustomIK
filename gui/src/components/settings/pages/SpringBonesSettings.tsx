@@ -341,6 +341,7 @@ export function SpringBonesSettings({
           key={selectedRole}
           role={selectedRole}
           spring={spring}
+          useAcceleration={config.springBonesUseAcceleration}
         />
       </div>
     </div>
