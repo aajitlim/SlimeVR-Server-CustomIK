@@ -135,3 +135,64 @@ The GUI exposes:
 A curve power of `1.0` is length-linear. Values below `1.0` spread the bend
 upward sooner; values above `1.0` keep the upper torso stiffer and move more of
 the bend toward the lower anchor.
+
+
+## Adjustment workflow
+
+The completed custom workspace lives under **Settings -> Custom IK / Retargeting**.
+
+### 1. Physical source mode
+
+Choose **Physical source positions** while calibrating the normal SlimeVR body.
+This leaves the SteamVR bridge on its original computed tracker positions.
+
+In the visualizer:
+
+- white spine joints show upper chest, chest, waist, and hip bend points,
+- wireframe discs show the original SlimeVR computed tracker positions,
+- the colored skeleton shows the anatomical solve.
+
+### 2. Configure virtual targets
+
+Keep Physical mode live while enabling individual custom tracker positions.
+The solid cyan discs preview the configured game-space positions without sending
+them to SteamVR yet. The selected role is yellow.
+
+Delta lines connect each SlimeVR source disc to its configured virtual target.
+
+For paired limbs, **Copy to opposite** copies the complete adjustment while
+**Mirror X to opposite** copies Y/Z/space/enabled and negates lateral X.
+
+### 3. Switch live output
+
+Choose **Virtualized positions** when the preview targets are aligned with the
+avatar anchors. This changes only the positions sent by the SteamVR bridge.
+Tracker rotations remain the original SlimeVR computed quaternions.
+
+Switching back to Physical mode does not delete the virtual target settings, so
+the two modes can be compared repeatedly.
+
+### 4. Tune spine and floor behavior
+
+The same page exposes:
+
+- articulated spine enable/disable,
+- spine bend distribution curve power,
+- hip floor-lift contribution,
+- quick 0% decoupled and 20% upstream-like floor-lift presets.
+
+**Reset all tracker targets** now resets only positional retarget targets.
+**Reset solver controls** resets only the spine/floor custom controls.
+
+## Visualizer legend
+
+- **Colored skeleton:** SlimeVR anatomical bone solution.
+- **White joint spheres:** upper chest, chest, waist, and hip bend points.
+- **Wireframe discs:** original SlimeVR computed tracker positions.
+- **Cyan solid discs:** configured virtual SteamVR tracker positions.
+- **Yellow solid disc:** selected virtual tracker role.
+- **Connecting lines:** positional delta from source to virtual target.
+
+The virtual preview can remain visible while live SteamVR output is in Physical
+mode. This is intentional so avatar targets can be adjusted without disturbing
+the calibration/reference output.
