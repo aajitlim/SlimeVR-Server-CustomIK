@@ -585,7 +585,6 @@ function SkeletonVisualizer({
   const previewContext = useRef<PreviewContext | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const resizeObserver = useRef(new ResizeObserver(([e]) => onResize(e)));
   const _bones = useAtomValue(bonesAtom);
   const computedTrackers = useAtomValue(computedTrackersAtom);
 
@@ -639,55 +638,61 @@ function SkeletonVisualizer({
     disabled,
   ]);
 
-  const onResize = (e: ResizeObserverEntry) => {
-    const context = previewContext.current;
-    if (!context || !containerRef.current || !canvasRef.current) return;
-    context.resize(e.contentRect.width, e.contentRect.height);
-  };
-
-  const onEnter = () => {
-    if (config?.devSettings.fastDataFeed) return;
-    const context = previewContext.current;
-    if (!context) return;
-    context.setFrameInterval(1000 / BASE_FRAMERATE);
-  };
-
-  const onLeave = () => {
-    if (config?.devSettings.fastDataFeed) return;
-    const context = previewContext.current;
-    if (!context) return;
-    context.setFrameInterval(1000 / LOW_FRAMERATE);
-  };
-
   useLayoutEffect(() => {
     if (disabled) return;
-    if (!canvasRef.current || !containerRef.current)
-      throw 'invalid state - no canvas or container';
-    resizeObserver.current.observe(containerRef.current);
 
-    previewContext.current = initializePreview(
-      canvasRef.current,
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container)
+      throw 'invalid state - no canvas or container';
+
+    const context = initializePreview(
+      canvas,
       createChildren(bones, BoneKind.root)
     );
+    previewContext.current = context;
+
     if (!config?.devSettings.fastDataFeed)
-      previewContext.current.setFrameInterval(1000 / LOW_FRAMERATE);
+      context.setFrameInterval(1000 / LOW_FRAMERATE);
 
-    const rect = containerRef.current.getBoundingClientRect();
-    previewContext.current.resize(rect.width, rect.height);
+    const resize = (entry?: ResizeObserverEntry) => {
+      if (entry) {
+        context.resize(entry.contentRect.width, entry.contentRect.height);
+        return;
+      }
 
-    containerRef.current.addEventListener('mouseenter', onEnter);
-    containerRef.current.addEventListener('mouseleave', onLeave);
+      const rect = container.getBoundingClientRect();
+      context.resize(rect.width, rect.height);
+    };
 
-    onInit(previewContext.current);
+    const onEnter = () => {
+      if (config?.devSettings.fastDataFeed) return;
+      context.setFrameInterval(1000 / BASE_FRAMERATE);
+    };
+
+    const onLeave = () => {
+      if (config?.devSettings.fastDataFeed) return;
+      context.setFrameInterval(1000 / LOW_FRAMERATE);
+    };
+
+    const observer = new ResizeObserver(([entry]) => resize(entry));
+    observer.observe(container);
+    resize();
+
+    container.addEventListener('mouseenter', onEnter);
+    container.addEventListener('mouseleave', onLeave);
+
+    onInit(context);
 
     return () => {
-      if (!previewContext.current || !containerRef.current) return;
-      resizeObserver.current.unobserve(containerRef.current);
-      previewContext.current.destroy();
-      previewContext.current = null;
+      observer.disconnect();
+      container.removeEventListener('mouseenter', onEnter);
+      container.removeEventListener('mouseleave', onLeave);
+      context.destroy();
 
-      containerRef.current.removeEventListener('mouseenter', onEnter);
-      containerRef.current.removeEventListener('mouseleave', onLeave);
+      if (previewContext.current === context) {
+        previewContext.current = null;
+      }
     };
   }, [disabled]);
 
