@@ -171,36 +171,35 @@ abstract class SteamVRBridge(
 
 	private fun getSpringAccelerationY(role: TrackerRole): Float? {
 		val skeleton = server.humanPoseManager.skeleton
+
+		// Keep acceleration affinity local to the body point represented by the
+		// exported tracker. Do NOT borrow an adjacent torso/limb IMU merely to
+		// keep accelerometer mode active: two separate Spring Bones driven by the
+		// same physical IMU can develop different phases and create large
+		// relative target motion downstream. If the local sensor is unavailable,
+		// the spring processor falls back to its own position-derived driver.
 		val candidates: Array<Tracker?> = when (role) {
 			TrackerRole.CHEST -> arrayOf(
 				skeleton.chestTracker,
 				skeleton.upperChestTracker,
-				skeleton.waistTracker,
-				skeleton.hipTracker,
 			)
 			TrackerRole.WAIST -> arrayOf(
-				skeleton.hipTracker,
 				skeleton.waistTracker,
-				skeleton.chestTracker,
-				skeleton.upperChestTracker,
+				skeleton.hipTracker,
 			)
 			TrackerRole.LEFT_KNEE -> arrayOf(
 				skeleton.leftLowerLegTracker,
 				skeleton.leftUpperLegTracker,
-				skeleton.leftFootTracker,
 			)
 			TrackerRole.RIGHT_KNEE -> arrayOf(
 				skeleton.rightLowerLegTracker,
 				skeleton.rightUpperLegTracker,
-				skeleton.rightFootTracker,
 			)
 			TrackerRole.LEFT_FOOT -> arrayOf(
 				skeleton.leftFootTracker,
-				skeleton.leftLowerLegTracker,
 			)
 			TrackerRole.RIGHT_FOOT -> arrayOf(
 				skeleton.rightFootTracker,
-				skeleton.rightLowerLegTracker,
 			)
 			TrackerRole.LEFT_ELBOW -> arrayOf(
 				skeleton.leftLowerArmTracker,
@@ -212,11 +211,9 @@ abstract class SteamVRBridge(
 			)
 			TrackerRole.LEFT_HAND -> arrayOf(
 				skeleton.leftHandTracker,
-				skeleton.leftLowerArmTracker,
 			)
 			TrackerRole.RIGHT_HAND -> arrayOf(
 				skeleton.rightHandTracker,
-				skeleton.rightLowerArmTracker,
 			)
 			else -> emptyArray()
 		}
