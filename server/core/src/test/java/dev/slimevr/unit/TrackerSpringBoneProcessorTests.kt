@@ -61,6 +61,55 @@ class TrackerSpringBoneProcessorTests {
 	}
 
 	@Test
+	fun constantAccelerationBiasDoesNotContinuouslyDriveSpring() {
+		val processor = TrackerSpringBoneProcessor()
+		val config = TrackerSpringBoneConfig(true, 0.05f, 12f, 1f)
+
+		var time = 1_000_000_000L
+		val source = Vector3(0f, 1f, 0f)
+		processor.apply(role, source, config, time, accelerationY = 1f)
+
+		repeat(30) {
+			time += 16_666_667L
+			val output = processor.apply(
+				role,
+				source,
+				config,
+				time,
+				accelerationY = 1f,
+			)
+			assertTrue(abs(output.y - source.y) < 1e-4f)
+		}
+	}
+
+	@Test
+	fun accelerationTransientKicksOnlyVerticalSpringOffset() {
+		val processor = TrackerSpringBoneProcessor()
+		val config = TrackerSpringBoneConfig(true, 0.05f, 10f, 1f)
+		val source = Vector3(1f, 2f, 3f)
+
+		var time = 1_000_000_000L
+		processor.apply(role, source, config, time, accelerationY = 1f)
+
+		time += 16_666_667L
+		processor.apply(role, source, config, time, accelerationY = 1f)
+
+		time += 16_666_667L
+		val output = processor.apply(
+			role,
+			source,
+			config,
+			time,
+			accelerationY = 1.8f,
+		)
+
+		assertEquals(source.x, output.x)
+		assertEquals(source.z, output.z)
+		assertTrue(output.y != source.y)
+		assertTrue(abs(output.y - source.y) <= config.distance + 1e-5f)
+	}
+
+	@Test
 	fun staleFrameGapResetsSpringInsteadOfExploding() {
 		val processor = TrackerSpringBoneProcessor()
 		val config = TrackerSpringBoneConfig(true, 0.05f, 12f, 1f)
