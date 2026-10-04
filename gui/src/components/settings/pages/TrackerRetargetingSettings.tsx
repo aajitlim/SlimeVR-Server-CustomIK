@@ -19,6 +19,19 @@ import {
   useTrackerRetargeting,
 } from '@/hooks/tracker-retarget';
 
+const OPPOSITE_ROLE: Partial<
+  Record<TrackerRetargetRole, TrackerRetargetRole>
+> = {
+  left_knee: 'right_knee',
+  right_knee: 'left_knee',
+  left_foot: 'right_foot',
+  right_foot: 'left_foot',
+  left_elbow: 'right_elbow',
+  right_elbow: 'left_elbow',
+  left_hand: 'right_hand',
+  right_hand: 'left_hand',
+};
+
 function clampOffset(value: number) {
   return Math.min(2, Math.max(-2, value));
 }
@@ -40,7 +53,7 @@ function OffsetAxis({
   return (
     <div className="flex flex-col gap-1">
       <Typography bold>{label}</Typography>
-      <div className="flex items-center gap-2 bg-background-60 rounded-lg p-2">
+      <div className="flex flex-wrap items-center gap-2 bg-background-60 rounded-lg p-2">
         <Button variant="tertiary" onClick={() => nudge(-2)}>
           -2 cm
         </Button>
@@ -89,12 +102,34 @@ function copyWithAdjustment(
   };
 }
 
+function SyncStatus({
+  loaded,
+  syncState,
+}: {
+  loaded: boolean;
+  syncState: 'loading' | 'saving' | 'synced';
+}) {
+  const text =
+    !loaded || syncState === 'loading'
+      ? 'Loading server settings...'
+      : syncState === 'saving'
+        ? 'Saving...'
+        : 'Saved to server config';
+
+  return <Typography color="secondary">{text}</Typography>;
+}
+
 export function TrackerRetargetingSettings() {
-  const { config, loaded, updateConfig, refresh } = useTrackerRetargeting();
+  const { config, loaded, syncState, updateConfig, refresh } =
+    useTrackerRetargeting();
   const [selectedRole, setSelectedRole] =
     useState<TrackerRetargetRole>('waist');
+  const [showSourceTargets, setShowSourceTargets] = useState(true);
+  const [showRetargetTargets, setShowRetargetTargets] = useState(true);
+  const [showDisplacementLines, setShowDisplacementLines] = useState(true);
 
   const selected = config.trackers[selectedRole];
+  const oppositeRole = OPPOSITE_ROLE[selectedRole];
 
   const roleButtons = useMemo(
     () =>
@@ -105,10 +140,45 @@ export function TrackerRetargetingSettings() {
           onClick={() => setSelectedRole(role)}
         >
           {RETARGET_ROLE_LABEL[role]}
+          {config.trackers[role].enabled ? '  ✓' : ''}
         </Button>
       )),
-    [selectedRole]
+    [config.trackers, selectedRole]
   );
+
+  const copyToOpposite = (mirrorX: boolean) => {
+    if (!oppositeRole) return;
+
+    updateConfig({
+      ...config,
+      trackers: {
+        ...config.trackers,
+        [oppositeRole]: {
+          ...selected,
+          x: mirrorX ? -selected.x : selected.x,
+        },
+      },
+    });
+  };
+
+  const resetTrackerTargets = () => {
+    updateConfig({
+      ...config,
+      trackers: makeDefaultTrackerRetargetConfig().trackers,
+    });
+  };
+
+  const resetSolverControls = () => {
+    updateConfig({
+      ...config,
+      hipFloorLiftWeight: 0,
+      spineArticulationEnabled: true,
+      spineCurvePower: 1,
+    });
+  };
+
+  const selectedMagnitudeCm =
+    Math.sqrt(selected.x ** 2 + selected.y ** 2 + selected.z ** 2) * 100;
 
   return (
     <SettingsPageLayout className="flex flex-col gap-2">
@@ -118,56 +188,89 @@ export function TrackerRetargetingSettings() {
         className="gap-4"
       >
         <div className="flex flex-col gap-2">
-          <Typography variant="main-title">Tracker retargeting</Typography>
-          <Typography color="secondary">
-            Keep SlimeVR's solved body and rotations untouched, then move only
-            the virtual tracker positions exported to SteamVR. The discs in the
-            preview show those game-space targets over the anatomical skeleton.
+          <Typography variant="main-title">
+            Tracker retargeting and spine tuning
           </Typography>
-          {!loaded && (
-            <div className="flex items-center gap-2">
-              <Typography color="secondary">
-                Waiting for retarget settings from the server...
-              </Typography>
-              <Button variant="secondary" onClick={refresh}>
-                Retry
-              </Button>
-            </div>
-          )}
+          <Typography color="secondary">
+            Keep SlimeVR's anatomical solve and tracker rotations authoritative,
+            while independently positioning the virtual tracker targets that are
+            exported to SteamVR.
+          </Typography>
+          <div className="flex flex-wrap items-center gap-3">
+            <SyncStatus loaded={loaded} syncState={syncState} />
+            <Button variant="secondary" onClick={refresh}>
+              Reload from server
+            </Button>
+          </div>
         </div>
 
-        <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.9fr)] gap-4 mt-4">
+        <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(380px,0.9fr)] gap-4 mt-4">
           <div className="flex flex-col gap-4">
-            <div className="bg-background-60 rounded-lg p-3 flex flex-col gap-2">
-              <CheckboxInternal
-                name="retargeting-enabled"
-                variant="toggle"
-                outlined
-                label="Enable SteamVR position retargeting"
-                checked={config.enabled}
-                onChange={(event) =>
-                  updateConfig({
-                    ...config,
-                    enabled: event.currentTarget.checked,
-                  })
-                }
-              />
+            <div className="bg-background-60 rounded-lg p-3 flex flex-col gap-3">
+              <Typography variant="section-title">
+                SteamVR output mode
+              </Typography>
               <Typography color="secondary">
-                Rotation still comes directly from SlimeVR's computed tracker.
-                These offsets only change the position sent across the SteamVR
-                bridge.
+                Physical keeps the normal SlimeVR computed tracker positions.
+                Virtualized keeps those rotations but substitutes the configured
+                game-space positions.
+              </Typography>
+              <div className="grid sm:grid-cols-2 gap-2">
+                <Button
+                  variant={!config.enabled ? 'tertiary' : 'secondary'}
+                  onClick={() =>
+                    updateConfig({
+                      ...config,
+                      enabled: false,
+                    })
+                  }
+                >
+                  Physical source positions
+                </Button>
+                <Button
+                  variant={config.enabled ? 'tertiary' : 'secondary'}
+                  onClick={() =>
+                    updateConfig({
+                      ...config,
+                      enabled: true,
+                    })
+                  }
+                >
+                  Virtualized positions
+                </Button>
+              </div>
+              <Typography color="secondary">
+                Current live output:{' '}
+                {config.enabled ? 'VIRTUALIZED' : 'PHYSICAL'}
               </Typography>
             </div>
 
             <div className="bg-background-60 rounded-lg p-3 flex flex-col gap-3">
-              <Typography variant="section-title">
-                Articulated spine
-              </Typography>
-              <Typography color="secondary">
-                Treat upper chest, chest, waist, and hip as separate rotation
-                samples. Directly tracked torso bones stay exact; only missing
-                bones are filled between neighboring anchors.
-              </Typography>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-col gap-1">
+                  <Typography variant="section-title">
+                    Articulated spine
+                  </Typography>
+                  <Typography color="secondary">
+                    Direct torso trackers stay authoritative. Missing
+                    upper-chest, chest, waist, or hip segments are distributed
+                    between their neighboring anchors.
+                  </Typography>
+                </div>
+                <Button
+                  variant="secondary"
+                  onClick={() =>
+                    updateConfig({
+                      ...config,
+                      spineArticulationEnabled: true,
+                      spineCurvePower: 1,
+                    })
+                  }
+                >
+                  Length-linear 1.00
+                </Button>
+              </div>
+
               <CheckboxInternal
                 name="spine-articulation-enabled"
                 variant="toggle"
@@ -181,6 +284,7 @@ export function TrackerRetargetingSettings() {
                   })
                 }
               />
+
               <div className="flex flex-col gap-2">
                 <div className="flex justify-between gap-3">
                   <Typography bold>Spine bend distribution</Typography>
@@ -205,29 +309,58 @@ export function TrackerRetargetingSettings() {
                 />
                 <div className="flex justify-between gap-3">
                   <Typography color="secondary">
-                    Earlier / more distributed bend
+                    Earlier / distributed
                   </Typography>
                   <Typography color="secondary">
-                    Later / more pelvis-local bend
+                    Later / pelvis-local
                   </Typography>
                 </div>
                 <Typography color="secondary">
-                  1.00 follows the actual configured spine segment lengths.
-                  Values below 1 spread rotation upward sooner; values above 1
-                  keep the upper torso more rigid and move more of the bend
-                  toward the lower anchor.
+                  1.00 follows the configured torso segment lengths. Lower
+                  values move bend upward sooner; higher values hold the upper
+                  torso straighter and concentrate more bend near the lower
+                  anchor.
                 </Typography>
               </div>
             </div>
 
             <div className="bg-background-60 rounded-lg p-3 flex flex-col gap-3">
-              <Typography variant="section-title">
-                Lower-body ground behavior
-              </Typography>
-              <Typography color="secondary">
-                Floor clipping can push feet and knees upward without also
-                lifting the pelvis. Zero fully decouples that pelvis lift.
-              </Typography>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-col gap-1">
+                  <Typography variant="section-title">
+                    Lower-body ground behavior
+                  </Typography>
+                  <Typography color="secondary">
+                    Controls how much floor clipping is allowed to lift the
+                    pelvis after correcting feet and knees.
+                  </Typography>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="secondary"
+                    onClick={() =>
+                      updateConfig({
+                        ...config,
+                        hipFloorLiftWeight: 0,
+                      })
+                    }
+                  >
+                    Decoupled 0%
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() =>
+                      updateConfig({
+                        ...config,
+                        hipFloorLiftWeight: 0.2,
+                      })
+                    }
+                  >
+                    Upstream-like 20%
+                  </Button>
+                </div>
+              </div>
+
               <div className="flex gap-3 items-center">
                 <input
                   className="flex-grow"
@@ -251,18 +384,31 @@ export function TrackerRetargetingSettings() {
               </div>
             </div>
 
-            <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-2">
-              {roleButtons}
+            <div className="bg-background-60 rounded-lg p-3 flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <Typography variant="section-title">
+                  Virtual tracker target
+                </Typography>
+                <Typography color="secondary">
+                  Select the exported tracker you want to align to the avatar.
+                  A check mark means that role currently has a custom position
+                  enabled.
+                </Typography>
+              </div>
+
+              <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-2">
+                {roleButtons}
+              </div>
             </div>
 
             <div className="bg-background-70 rounded-lg p-3 flex flex-col gap-3">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <div className="flex flex-col">
                   <Typography variant="section-title">
                     {RETARGET_ROLE_LABEL[selectedRole]}
                   </Typography>
                   <Typography color="secondary">
-                    Virtual target placement
+                    Configured displacement: {selectedMagnitudeCm.toFixed(1)} cm
                   </Typography>
                 </div>
                 <Button
@@ -352,41 +498,113 @@ export function TrackerRetargetingSettings() {
                   )
                 }
               />
+
+              {oppositeRole && (
+                <div className="flex flex-wrap gap-2 pt-1">
+                  <Button
+                    variant="secondary"
+                    onClick={() => copyToOpposite(false)}
+                  >
+                    Copy to {RETARGET_ROLE_LABEL[oppositeRole]}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    onClick={() => copyToOpposite(true)}
+                  >
+                    Mirror X to {RETARGET_ROLE_LABEL[oppositeRole]}
+                  </Button>
+                </div>
+              )}
             </div>
 
-            <div className="flex gap-2">
-              <Button
-                variant="secondary"
-                onClick={() =>
-                  updateConfig({
-                    ...makeDefaultTrackerRetargetConfig(),
-                    hipFloorLiftWeight: config.hipFloorLiftWeight,
-                  })
-                }
-              >
+            <div className="flex flex-wrap gap-2">
+              <Button variant="secondary" onClick={resetTrackerTargets}>
                 Reset all tracker targets
               </Button>
+              <Button variant="secondary" onClick={resetSolverControls}>
+                Reset solver controls
+              </Button>
               <Button variant="secondary" onClick={refresh}>
-                Reload from server
+                Reload saved values
               </Button>
             </div>
           </div>
 
-          <div className="relative rounded-lg overflow-hidden bg-background-60 min-h-[560px] lg:sticky lg:top-2">
-            <SkeletonVisualizerWidget
-              retargetConfig={config}
-              selectedRetargetRole={selectedRole}
-              showRetargetTargets
-            />
-            <div className="absolute bottom-3 left-3 right-3 bg-background-80/90 rounded-lg p-3 pointer-events-none">
-              <Typography bold>
-                Cyan discs = virtual SteamVR tracker targets
-              </Typography>
+          <div className="lg:sticky lg:top-2 self-start flex flex-col gap-2">
+            <div className="bg-background-60 rounded-lg p-3 flex flex-col gap-2">
+              <Typography variant="section-title">Visualizer layers</Typography>
+              <div className="grid sm:grid-cols-3 gap-2">
+                <CheckboxInternal
+                  name="show-source-targets"
+                  variant="toggle"
+                  outlined
+                  label="Source discs"
+                  checked={showSourceTargets}
+                  onChange={(event) =>
+                    setShowSourceTargets(event.currentTarget.checked)
+                  }
+                />
+                <CheckboxInternal
+                  name="show-retarget-targets"
+                  variant="toggle"
+                  outlined
+                  label="Virtual discs"
+                  checked={showRetargetTargets}
+                  onChange={(event) =>
+                    setShowRetargetTargets(event.currentTarget.checked)
+                  }
+                />
+                <CheckboxInternal
+                  name="show-displacement-lines"
+                  variant="toggle"
+                  outlined
+                  label="Delta lines"
+                  checked={showDisplacementLines}
+                  disabled={!showSourceTargets || !showRetargetTargets}
+                  onChange={(event) =>
+                    setShowDisplacementLines(event.currentTarget.checked)
+                  }
+                />
+              </div>
               <Typography color="secondary">
-                The colored skeleton remains the untouched SlimeVR anatomical
-                solve. Select a role and move X/Y/Z until the disc sits on the
-                avatar anchor you want.
+                Source discs are SlimeVR's computed anatomical tracker
+                positions. Virtual discs preview the configured SteamVR
+                positions even while live output remains in Physical mode.
               </Typography>
+            </div>
+
+            <div className="relative rounded-lg overflow-hidden bg-background-60 min-h-[620px]">
+              <SkeletonVisualizerWidget
+                retargetConfig={config}
+                selectedRetargetRole={selectedRole}
+                showSourceTargets={showSourceTargets}
+                showRetargetTargets={showRetargetTargets}
+                showDisplacementLines={showDisplacementLines}
+                previewConfiguredOffsets
+              />
+
+              <div className="absolute top-3 left-3 bg-background-80/90 rounded-lg p-3 pointer-events-none">
+                <Typography bold>
+                  Selected: {RETARGET_ROLE_LABEL[selectedRole]}
+                </Typography>
+                <Typography color="secondary">
+                  X {((selected.x ?? 0) * 100).toFixed(1)} cm · Y{' '}
+                  {((selected.y ?? 0) * 100).toFixed(1)} cm · Z{' '}
+                  {((selected.z ?? 0) * 100).toFixed(1)} cm
+                </Typography>
+              </div>
+
+              <div className="absolute bottom-3 left-3 right-3 bg-background-80/90 rounded-lg p-3 pointer-events-none flex flex-col gap-1">
+                <Typography bold>
+                  Wireframe = SlimeVR source · Cyan = virtual target · Yellow =
+                  selected virtual target
+                </Typography>
+                <Typography color="secondary">
+                  The colored skeleton is the articulated anatomical solve.
+                  Retarget offsets never feed back into those bones or their
+                  rotations.
+                </Typography>
+              </div>
             </div>
           </div>
         </div>
