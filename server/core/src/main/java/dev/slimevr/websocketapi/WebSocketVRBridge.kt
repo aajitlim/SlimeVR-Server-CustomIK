@@ -209,6 +209,10 @@ class WebSocketVRBridge(
 		if (json.has("springBonesEnabled")) {
 			bridgeConfig.springBonesEnabled = json["springBonesEnabled"].asBoolean()
 		}
+		if (json.has("springBonesUseAcceleration")) {
+			bridgeConfig.springBonesUseAcceleration =
+				json["springBonesUseAcceleration"].asBoolean()
+		}
 
 		val springBones = json["springBones"] as? ObjectNode
 		springBones?.fields()?.forEach { (roleKey, value) ->
@@ -260,6 +264,10 @@ class WebSocketVRBridge(
 		response.put("type", "retarget_config")
 		response.put("enabled", bridgeConfig.positionRetargetingEnabled)
 		response.put("springBonesEnabled", bridgeConfig.springBonesEnabled)
+		response.put(
+			"springBonesUseAcceleration",
+			bridgeConfig.springBonesUseAcceleration,
+		)
 		response.put(
 			"hipFloorLiftWeight",
 			server.configManager.vrConfig.legTweaks.hipFloorLiftWeight,
