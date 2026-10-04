@@ -33,6 +33,8 @@ export function SpringBoneCloseupWidget({
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const springRef = useRef(spring);
+  springRef.current = spring;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -136,9 +138,10 @@ export function SpringBoneCloseupWidget({
     let springVelocity = 0;
     let lastTime = performance.now();
     let lastKick = lastTime;
+    let lastGeometryDistance = -1;
 
     const updateGeometry = () => {
-      const distance = Math.max(0, spring.distance);
+      const distance = Math.max(0, springRef.current.distance);
       travelRail.geometry.setFromPoints([
         new Vector3(0, -distance, 0),
         new Vector3(0, distance, 0),
@@ -180,9 +183,15 @@ export function SpringBoneCloseupWidget({
       const dt = Math.min(0.05, Math.max(1 / 240, (now - lastTime) / 1000));
       lastTime = now;
 
-      const distance = Math.max(0, spring.distance);
-      const strength = Math.max(1, spring.strength);
-      const pull = Math.max(0, spring.pull);
+      const currentSpring = springRef.current;
+      const distance = Math.max(0, currentSpring.distance);
+      const strength = Math.max(1, currentSpring.strength);
+      const pull = Math.max(0, currentSpring.pull);
+
+      if (distance !== lastGeometryDistance) {
+        updateGeometry();
+        lastGeometryDistance = distance;
+      }
 
       // Re-kick the local preview periodically. This is not tracker telemetry;
       // it is a deterministic visualization of how the configured oscillator
@@ -195,7 +204,7 @@ export function SpringBoneCloseupWidget({
         lastKick = now;
       }
 
-      if (!spring.enabled || distance <= 0 || pull <= 0) {
+      if (!currentSpring.enabled || distance <= 0 || pull <= 0) {
         springOffset += (0 - springOffset) * Math.min(1, dt * 12);
         springVelocity *= Math.max(0, 1 - dt * 12);
       } else {
@@ -244,7 +253,7 @@ export function SpringBoneCloseupWidget({
       (lowerLimit.material as MeshBasicMaterial).dispose();
       renderer.dispose();
     };
-  }, [spring.distance, spring.enabled, spring.pull, spring.strength]);
+  }, []);
 
   return (
     <div className="flex flex-col gap-2">
