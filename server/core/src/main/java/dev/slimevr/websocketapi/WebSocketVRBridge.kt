@@ -211,6 +211,15 @@ class WebSocketVRBridge(
 			server.humanPoseManager.updateLegTweaksConfig()
 		}
 
+		if (json.has("spineArticulationEnabled")) {
+			server.configManager.vrConfig.spineArticulation.enabled =
+				json["spineArticulationEnabled"].asBoolean()
+		}
+		if (json.has("spineCurvePower")) {
+			server.configManager.vrConfig.spineArticulation.curvePower =
+				json["spineCurvePower"].asDouble().toFloat().coerceIn(0.25f, 4f)
+		}
+
 		server.configManager.saveConfig()
 	}
 
@@ -222,6 +231,14 @@ class WebSocketVRBridge(
 		response.put(
 			"hipFloorLiftWeight",
 			server.configManager.vrConfig.legTweaks.hipFloorLiftWeight,
+		)
+		response.put(
+			"spineArticulationEnabled",
+			server.configManager.vrConfig.spineArticulation.enabled,
+		)
+		response.put(
+			"spineCurvePower",
+			server.configManager.vrConfig.spineArticulation.curvePower,
 		)
 
 		val trackers = mapper.nodeFactory.objectNode()
