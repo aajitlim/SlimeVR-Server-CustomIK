@@ -222,13 +222,8 @@ export function TrackerRetargetingSettings() {
           </div>
         </div>
 
-        <div
-          className={
-            activeSubtab === 'retargeting'
-              ? 'grid lg:grid-cols-[minmax(0,1fr)_minmax(380px,0.9fr)] gap-4 mt-4'
-              : 'hidden'
-          }
-        >
+        {activeSubtab === 'retargeting' && (
+          <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(380px,0.9fr)] gap-4 mt-4">
           <div className="flex flex-col gap-4">
             <div className="bg-background-60 rounded-lg p-3 flex flex-col gap-3">
               <Typography variant="section-title">
@@ -609,6 +604,7 @@ export function TrackerRetargetingSettings() {
 
             <div className="relative rounded-lg overflow-hidden bg-background-60 min-h-[620px]">
               <SkeletonVisualizerWidget
+                key="retargeting-body-visualizer"
                 retargetConfig={config}
                 selectedRetargetRole={selectedRole}
                 showSpineNodes={showSpineNodes}
@@ -643,6 +639,7 @@ export function TrackerRetargetingSettings() {
             </div>
           </div>
         </div>
+        )}
 
         {activeSubtab === 'spring_bones' && (
           <SpringBonesSettings
