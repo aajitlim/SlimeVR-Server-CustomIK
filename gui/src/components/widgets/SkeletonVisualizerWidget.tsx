@@ -113,6 +113,18 @@ function initializePreview(
 
   const retargetGroup = new Group();
   const retargetMarkers = new Map<TrackerRetargetRole, RetargetMarker>();
+  const springRangeLine = new Line(
+    new BufferGeometry(),
+    new LineBasicMaterial({
+      color: 0xff67d8,
+      transparent: true,
+      opacity: 0.9,
+      depthTest: false,
+    })
+  );
+  springRangeLine.renderOrder = 12;
+  springRangeLine.visible = false;
+  retargetGroup.add(springRangeLine);
   scene.add(retargetGroup);
 
   const spineNodeGroup = new Group();
@@ -249,10 +261,15 @@ function initializePreview(
     showSourceTargets = false,
     showRetargetTargets = false,
     showDisplacementLines = true,
-    previewConfiguredOffsets = true
+    previewConfiguredOffsets = true,
+    showSpringRange = false
   ) => {
     retargetGroup.visible =
-      showSourceTargets || showRetargetTargets || showDisplacementLines;
+      showSourceTargets ||
+      showRetargetTargets ||
+      showDisplacementLines ||
+      showSpringRange;
+    springRangeLine.visible = false;
     if (!retargetGroup.visible) return;
 
     const hipRotation = QuaternionFromQuatT(
@@ -332,6 +349,15 @@ function initializePreview(
       const lineMaterial = marker.line.material as LineBasicMaterial;
       lineMaterial.color.set(selected ? 0xffd54a : 0x44e4ff);
       marker.line.geometry.setFromPoints([source, target]);
+
+      if (showSpringRange && selected && config?.springBones[role]?.enabled) {
+        const distance = config.springBones[role].distance;
+        springRangeLine.geometry.setFromPoints([
+          new Vector3(target.x, target.y - distance, target.z),
+          new Vector3(target.x, target.y + distance, target.z),
+        ]);
+        springRangeLine.visible = true;
+      }
     }
   };
 
@@ -449,6 +475,8 @@ function initializePreview(
     destroy: () => {
       cancelAnimationFrame(animationFrameId);
       skeletonHelper.dispose();
+      springRangeLine.geometry.dispose();
+      (springRangeLine.material as LineBasicMaterial).dispose();
       spineNodes.forEach((node) => {
         node.geometry.dispose();
         (node.material as MeshBasicMaterial).dispose();
@@ -539,6 +567,7 @@ function SkeletonVisualizer({
   showRetargetTargets = false,
   showDisplacementLines = true,
   previewConfiguredOffsets = true,
+  showSpringRange = false,
 }: {
   onInit: (context: PreviewContext) => void;
   disabled?: boolean;
@@ -549,6 +578,7 @@ function SkeletonVisualizer({
   showRetargetTargets?: boolean;
   showDisplacementLines?: boolean;
   previewConfiguredOffsets?: boolean;
+  showSpringRange?: boolean;
 }) {
   const { config } = useConfig();
 
@@ -593,7 +623,8 @@ function SkeletonVisualizer({
       showSourceTargets,
       showRetargetTargets,
       showDisplacementLines,
-      previewConfiguredOffsets
+      previewConfiguredOffsets,
+      showSpringRange
     );
   }, [
     computedTrackers,
@@ -604,6 +635,7 @@ function SkeletonVisualizer({
     showRetargetTargets,
     showDisplacementLines,
     previewConfiguredOffsets,
+    showSpringRange,
     disabled,
   ]);
 
@@ -690,6 +722,7 @@ export function SkeletonVisualizerWidget({
   showRetargetTargets = false,
   showDisplacementLines = true,
   previewConfiguredOffsets = true,
+  showSpringRange = false,
 }: {
   onInit?: (context: PreviewContext) => void;
   disabled?: boolean;
@@ -701,6 +734,7 @@ export function SkeletonVisualizerWidget({
   showRetargetTargets?: boolean;
   showDisplacementLines?: boolean;
   previewConfiguredOffsets?: boolean;
+  showSpringRange?: boolean;
 }) {
   const { l10n } = useLocalization();
   const [error, setError] = useState(false);
@@ -723,6 +757,7 @@ export function SkeletonVisualizerWidget({
             showRetargetTargets={showRetargetTargets}
             showDisplacementLines={showDisplacementLines}
             previewConfiguredOffsets={previewConfiguredOffsets}
+            showSpringRange={showSpringRange}
           />
         </ErrorBoundary>
       </div>
