@@ -26,12 +26,21 @@ export type TrackerRetargetAdjustment = {
   space: TrackerRetargetSpace;
 };
 
+export type TrackerSpringBoneAdjustment = {
+  enabled: boolean;
+  distance: number;
+  strength: number;
+  pull: number;
+};
+
 export type TrackerRetargetConfig = {
   enabled: boolean;
   hipFloorLiftWeight: number;
   spineArticulationEnabled: boolean;
   spineCurvePower: number;
+  springBonesEnabled: boolean;
   trackers: Record<TrackerRetargetRole, TrackerRetargetAdjustment>;
+  springBones: Record<TrackerRetargetRole, TrackerSpringBoneAdjustment>;
 };
 
 export const RETARGET_ROLE_BODY_PART: Record<TrackerRetargetRole, BodyPart> = {
@@ -68,23 +77,37 @@ const defaultAdjustment = (): TrackerRetargetAdjustment => ({
   space: 'body_yaw',
 });
 
+const defaultSpringBone = (): TrackerSpringBoneAdjustment => ({
+  enabled: false,
+  distance: 0.03,
+  strength: 12,
+  pull: 0.65,
+});
+
 export const makeDefaultTrackerRetargetConfig = (): TrackerRetargetConfig => ({
   enabled: false,
   hipFloorLiftWeight: 0,
   spineArticulationEnabled: true,
   spineCurvePower: 1,
+  springBonesEnabled: false,
   trackers: Object.fromEntries(
     RETARGET_ROLES.map((role) => [role, defaultAdjustment()])
   ) as Record<TrackerRetargetRole, TrackerRetargetAdjustment>,
+  springBones: Object.fromEntries(
+    RETARGET_ROLES.map((role) => [role, defaultSpringBone()])
+  ) as Record<TrackerRetargetRole, TrackerSpringBoneAdjustment>,
 });
 
 type TrackerRetargetMessage = Omit<
   Partial<TrackerRetargetConfig>,
-  'trackers'
+  'trackers' | 'springBones'
 > & {
   type?: string;
   trackers?: Partial<
     Record<TrackerRetargetRole, Partial<TrackerRetargetAdjustment>>
+  >;
+  springBones?: Partial<
+    Record<TrackerRetargetRole, Partial<TrackerSpringBoneAdjustment>>
   >;
 };
 
@@ -120,6 +143,35 @@ export function normalizeTrackerRetargetConfig(
     })
   ) as Record<TrackerRetargetRole, TrackerRetargetAdjustment>;
 
+  const springBones = Object.fromEntries(
+    RETARGET_ROLES.map((role) => {
+      const current = message.springBones?.[role];
+      const fallback = defaults.springBones[role];
+
+      return [
+        role,
+        {
+          enabled:
+            typeof current?.enabled === 'boolean'
+              ? current.enabled
+              : fallback.enabled,
+          distance: Math.min(
+            0.25,
+            Math.max(0, finiteNumber(current?.distance, fallback.distance))
+          ),
+          strength: Math.min(
+            30,
+            Math.max(1, finiteNumber(current?.strength, fallback.strength))
+          ),
+          pull: Math.min(
+            2,
+            Math.max(0, finiteNumber(current?.pull, fallback.pull))
+          ),
+        },
+      ];
+    })
+  ) as Record<TrackerRetargetRole, TrackerSpringBoneAdjustment>;
+
   return {
     enabled:
       typeof message.enabled === 'boolean' ? message.enabled : defaults.enabled,
@@ -144,7 +196,12 @@ export function normalizeTrackerRetargetConfig(
         finiteNumber(message.spineCurvePower, defaults.spineCurvePower)
       )
     ),
+    springBonesEnabled:
+      typeof message.springBonesEnabled === 'boolean'
+        ? message.springBonesEnabled
+        : defaults.springBonesEnabled,
     trackers,
+    springBones,
   };
 }
 
@@ -178,7 +235,9 @@ export function useTrackerRetargeting() {
       hipFloorLiftWeight: normalized.hipFloorLiftWeight,
       spineArticulationEnabled: normalized.spineArticulationEnabled,
       spineCurvePower: normalized.spineCurvePower,
+      springBonesEnabled: normalized.springBonesEnabled,
       trackers: normalized.trackers,
+      springBones: normalized.springBones,
     });
   };
 
