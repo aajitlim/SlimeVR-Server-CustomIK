@@ -77,3 +77,28 @@ This branch adds `legTweaks.hipFloorLiftWeight`:
 
 Feet and knees still receive the existing floor correction. This setting only
 controls the secondary pelvis lift contribution.
+
+
+## Visual retarget editor
+
+The GUI now includes **Settings -> Tracker retargeting**.
+
+It uses the same persisted SteamVR bridge configuration as the exporter. The
+editor can:
+
+- enable/disable the export-only retarget layer,
+- select hip/waist, chest, knees, feet, elbows, or hands,
+- edit X/Y/Z offsets in centimetres,
+- choose `body_yaw` or `world` position space,
+- tune the lower-body `hipFloorLiftWeight`, and
+- preview the resulting output targets directly on the skeleton visualizer.
+
+The skeleton remains the anatomical SlimeVR solve. Cyan discs are the virtual
+SteamVR output positions. The selected disc is highlighted, and a line connects
+the original computed tracker position to the retargeted output position. The
+disc keeps the original computed tracker rotation, so positional retargeting is
+visually separate from rotational tracking.
+
+The editor communicates over a small JSON text channel on the existing
+websocket. Existing SolarXR binary protocol messages are unchanged, which keeps
+this fork easier to rebase onto upstream SlimeVR.
