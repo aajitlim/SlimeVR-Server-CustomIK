@@ -311,7 +311,7 @@ export function TrackerRetargetingSettings() {
             </div>
           </div>
 
-          <div className="rounded-lg overflow-hidden bg-background-60 min-h-[560px] lg:sticky lg:top-2">
+          <div className="relative rounded-lg overflow-hidden bg-background-60 min-h-[560px] lg:sticky lg:top-2">
             <SkeletonVisualizerWidget
               retargetConfig={config}
               selectedRetargetRole={selectedRole}
