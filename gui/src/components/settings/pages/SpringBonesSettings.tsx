@@ -180,8 +180,9 @@ export function SpringBonesSettings({
           <Typography color="secondary">
             Accelerometer mode uses gravity/bias-removed world-Y IMU motion as
             the fast spring impulse while keeping the solved position as the
-            rest anchor. If no usable accelerometer is available for a point,
-            it automatically falls back to position-derived motion.
+            rest anchor. Sensor affinity stays local to each body point: a
+            chest spring will not borrow hip/waist acceleration, and a missing
+            local IMU falls back to that spring's own position-derived motion.
           </Typography>
         </div>
 
