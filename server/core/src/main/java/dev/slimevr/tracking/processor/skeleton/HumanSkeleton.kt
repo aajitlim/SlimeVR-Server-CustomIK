@@ -1,6 +1,7 @@
 package dev.slimevr.tracking.processor.skeleton
 
 import dev.slimevr.VRServer
+import dev.slimevr.config.BoneComplianceConfig
 import dev.slimevr.config.MountingMethods
 import dev.slimevr.config.StayAlignedConfig
 import dev.slimevr.tracking.processor.Bone
@@ -8,6 +9,7 @@ import dev.slimevr.tracking.processor.BoneType
 import dev.slimevr.tracking.processor.Constraint
 import dev.slimevr.tracking.processor.Constraint.Companion.ConstraintType
 import dev.slimevr.tracking.processor.HumanPoseManager
+import dev.slimevr.tracking.processor.config.SkeletonConfigOffsets
 import dev.slimevr.tracking.processor.config.SkeletonConfigToggles
 import dev.slimevr.tracking.processor.config.SkeletonConfigValues
 import dev.slimevr.tracking.processor.stayaligned.StayAligned
@@ -33,6 +35,8 @@ import io.github.axisangles.ktmath.Vector3.Companion.NULL
 import io.github.axisangles.ktmath.Vector3.Companion.POS_Y
 import solarxr_protocol.datatypes.BodyPart
 import java.lang.IllegalArgumentException
+import kotlin.math.PI
+import kotlin.math.abs
 import kotlin.properties.Delegates
 
 class HumanSkeleton(
@@ -215,6 +219,7 @@ class HumanSkeleton(
 	var tapDetectionManager: TapDetectionManager? = null
 	var localizer = Localizer(this)
 	var ikSolver = IKSolver(headBone)
+	private val boneComplianceProcessor = BoneComplianceProcessor()
 	var userHeightCalibration: UserHeightCalibration? = null
 
 	// Stay Aligned
@@ -545,6 +550,10 @@ class HumanSkeleton(
 
 		StayAligned.adjustNextTracker(trackerSkeleton, stayAlignedConfig)
 
+		// Compliance must never feed its previous-frame length changes back into
+		// the articulated rotation solve. Always begin FK from calibrated lengths.
+		restoreBoneComplianceRestLengths()
+
 		updateTransforms()
 		updateBones()
 		if (enforceConstraints) {
@@ -552,6 +561,13 @@ class HumanSkeleton(
 			// https://github.com/SlimeVR/SlimeVR-Server/issues/1297 is solved
 			headBone.updateWithConstraints(false)
 		}
+
+		// Axial compliance is a physical-position refinement only. Rotations are
+		// already finalized above. Apply all torso strains simultaneously, then
+		// refresh FK once before computed tracker positions are emitted.
+		applyBoneComplianceModel()
+		updateBones()
+
 		updateComputedTrackers()
 
 		// Don't run post-processing if the tracking is paused
@@ -1015,6 +1031,114 @@ class HumanSkeleton(
 			)
 			hipTrackerBone.setRotation(hipBone.getLocalRotation())
 		}
+	}
+
+	private fun restoreBoneComplianceRestLengths() {
+		upperChestBone.length =
+			humanPoseManager.getOffset(SkeletonConfigOffsets.UPPER_CHEST)
+		chestBone.length =
+			humanPoseManager.getOffset(SkeletonConfigOffsets.CHEST)
+		waistBone.length =
+			humanPoseManager.getOffset(SkeletonConfigOffsets.WAIST)
+	}
+
+	private fun applyBoneComplianceModel() {
+		val config =
+			humanPoseManager.server?.configManager?.vrConfig?.boneCompliance
+				?: run {
+					boneComplianceProcessor.reset()
+					return
+				}
+
+		if (!config.enabled || config.overallCompliance <= 0f) {
+			boneComplianceProcessor.reset()
+			return
+		}
+
+		val upperChestRest =
+			humanPoseManager.getOffset(SkeletonConfigOffsets.UPPER_CHEST)
+		val chestRest =
+			humanPoseManager.getOffset(SkeletonConfigOffsets.CHEST)
+		val waistRest =
+			humanPoseManager.getOffset(SkeletonConfigOffsets.WAIST)
+
+		val inputs = listOf(
+			BoneComplianceSegmentInput(
+				key = BoneComplianceConfig.UPPER_CHEST_TO_CHEST,
+				restLength = upperChestRest,
+				relativeRotationRadians = relativeRotationAngle(
+					upperChestBone.getGlobalRotation(),
+					chestBone.getGlobalRotation(),
+				),
+				relativeAccelerationY = relativeAccelerationY(
+					upperChestTracker,
+					chestTracker,
+				),
+			),
+			BoneComplianceSegmentInput(
+				key = BoneComplianceConfig.CHEST_TO_WAIST,
+				restLength = chestRest,
+				relativeRotationRadians = relativeRotationAngle(
+					chestBone.getGlobalRotation(),
+					waistBone.getGlobalRotation(),
+				),
+				relativeAccelerationY = relativeAccelerationY(
+					chestTracker,
+					waistTracker,
+				),
+			),
+			BoneComplianceSegmentInput(
+				key = BoneComplianceConfig.WAIST_TO_HIP,
+				restLength = waistRest,
+				relativeRotationRadians = relativeRotationAngle(
+					waistBone.getGlobalRotation(),
+					hipBone.getGlobalRotation(),
+				),
+				relativeAccelerationY = relativeAccelerationY(
+					waistTracker,
+					hipTracker,
+				),
+			),
+		)
+
+		val strains = boneComplianceProcessor.solve(inputs, config)
+
+		upperChestBone.length =
+			upperChestRest *
+				(1f + (strains[BoneComplianceConfig.UPPER_CHEST_TO_CHEST] ?: 0f))
+		chestBone.length =
+			chestRest *
+				(1f + (strains[BoneComplianceConfig.CHEST_TO_WAIST] ?: 0f))
+		waistBone.length =
+			waistRest *
+				(1f + (strains[BoneComplianceConfig.WAIST_TO_HIP] ?: 0f))
+	}
+
+	private fun relativeRotationAngle(
+		upper: Quaternion,
+		lower: Quaternion,
+	): Float {
+		var angle = abs((upper.inv() * lower).angleR())
+		val twoPi = (PI * 2.0).toFloat()
+		if (angle > PI.toFloat()) angle = twoPi - angle
+		return angle.coerceAtLeast(0f)
+	}
+
+	private fun relativeAccelerationY(
+		upper: Tracker?,
+		lower: Tracker?,
+	): Float? {
+		if (upper == null || lower == null) return null
+		if (!upper.hasAcceleration || !lower.hasAcceleration) return null
+
+		val upperAcceleration = upper.getAcceleration()
+		val lowerAcceleration = lower.getAcceleration()
+		if (upperAcceleration == NULL || lowerAcceleration == NULL) return null
+		if (!upperAcceleration.y.isFinite() || !lowerAcceleration.y.isFinite()) return null
+
+		// Common gravity and whole-body translation largely cancel here. What
+		// remains is the differential vertical acceleration across this span.
+		return upperAcceleration.y - lowerAcceleration.y
 	}
 
 	/**
