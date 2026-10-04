@@ -38,6 +38,8 @@ class VRConfig {
 
 	val spineArticulation: SpineArticulationConfig = SpineArticulationConfig()
 
+	val boneCompliance: BoneComplianceConfig = BoneComplianceConfig()
+
 	val tapDetection: TapDetectionConfig = TapDetectionConfig()
 
 	val resetsConfig: ResetsConfig = ResetsConfig()
