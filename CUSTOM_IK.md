@@ -236,3 +236,21 @@ paused/stalled bridge cannot create a large accumulated impulse.
 The Spring Bones visualizer shows a magenta line around the selected tracker
 anchor representing its configured +/- travel limit. Individual roles default
 to disabled, and the global Spring Bones output toggle also defaults to off.
+
+
+### Spring Bones dual viewers
+
+The Spring Bones subtab intentionally uses two separate renderers:
+
+1. **Disc / body view** — the normal articulated skeleton with solved source
+   discs and virtual target discs. This answers where the selected spring point
+   is attached to the body.
+2. **Spring motion close-up** — a dedicated local-space orthographic renderer
+   centered on the selected tracker disc. It renders the same 5.8 cm preview
+   disc radius used by the tracker overlay, the Y-axis travel rail, the rest
+   position, upper/lower hard-limit rings, and a moving preview disc.
+
+The close-up injects a deterministic periodic vertical-motion impulse using the
+current spring distance/strength/pull values so the spring response can be seen
+without requiring the user to physically move. It is explicitly a parameter
+preview, not live spring telemetry.
