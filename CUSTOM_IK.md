@@ -399,7 +399,7 @@ influence the computed chest/hip and downstream limb root positions.
 Spring Bones remain export-only and cannot feed back into Bone Compliance or the
 physical skeleton.
 
-## Current custom version: articulated retargeting + Spring Bones
+## Current custom version: articulated retargeting + Bone Compliance + Spring Bones
 
 This version expands the original position-retargeting experiment into a broader
 **Custom IK** workspace for tuning how SlimeVR's solved body is exported and
@@ -411,6 +411,9 @@ The main additions in this version are:
 - independent articulated torso interpolation,
 - pelvis/floor-lift decoupling,
 - a visual tracker placement editor,
+- a new **Bone Compliance** physical torso strain solver,
+- relative-rotation plus differential-acceleration/jerk evidence for torso length interpolation,
+- simultaneous bounded strain solving with optional total torso length preservation,
 - a new **Spring Bones** secondary-motion system,
 - a dedicated spring-motion close-up renderer,
 - safer WebGL renderer lifecycle handling when switching between Custom IK
@@ -418,13 +421,16 @@ The main additions in this version are:
 - persistent configuration over the existing SlimeVR websocket without changing
   the SolarXR binary protocol.
 
-The Custom IK UI is split into two subtabs:
+The Custom IK UI is split into three subtabs:
 
 1. **Retargeting / Spine**
 2. **Spring Bones**
+3. **Bone Compliance**
 
-These tabs intentionally solve different problems and now own separate rendering
-lifecycles.
+These tabs intentionally solve different problems and own separate rendering
+lifecycles. Retargeting / Spine handles rotation distribution and virtual target
+placement, Bone Compliance refines the physical torso positions, and Spring
+Bones adds output-only secondary motion.
 
 ### Retargeting / Spine tab
 
