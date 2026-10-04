@@ -5,7 +5,7 @@ import dev.slimevr.tracking.processor.retarget.TrackerSpringBoneProcessor
 import dev.slimevr.tracking.trackers.TrackerRole
 import io.github.axisangles.ktmath.Vector3
 import kotlin.math.abs
-import kotlin.test.Test
+import org.junit.jupiter.api.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
