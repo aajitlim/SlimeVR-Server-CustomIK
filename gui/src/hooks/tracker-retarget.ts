@@ -1,0 +1,165 @@
+import { useEffect, useState } from 'react';
+import { BodyPart } from 'solarxr-protocol';
+import { useWebsocketAPI } from '@/hooks/websocket-api';
+
+export const RETARGET_ROLES = [
+  'waist',
+  'chest',
+  'left_knee',
+  'right_knee',
+  'left_foot',
+  'right_foot',
+  'left_elbow',
+  'right_elbow',
+  'left_hand',
+  'right_hand',
+] as const;
+
+export type TrackerRetargetRole = (typeof RETARGET_ROLES)[number];
+export type TrackerRetargetSpace = 'body_yaw' | 'world';
+
+export type TrackerRetargetAdjustment = {
+  enabled: boolean;
+  x: number;
+  y: number;
+  z: number;
+  space: TrackerRetargetSpace;
+};
+
+export type TrackerRetargetConfig = {
+  enabled: boolean;
+  hipFloorLiftWeight: number;
+  trackers: Record<TrackerRetargetRole, TrackerRetargetAdjustment>;
+};
+
+export const RETARGET_ROLE_BODY_PART: Record<TrackerRetargetRole, BodyPart> = {
+  waist: BodyPart.HIP,
+  chest: BodyPart.UPPER_CHEST,
+  left_knee: BodyPart.LEFT_UPPER_LEG,
+  right_knee: BodyPart.RIGHT_UPPER_LEG,
+  left_foot: BodyPart.LEFT_FOOT,
+  right_foot: BodyPart.RIGHT_FOOT,
+  left_elbow: BodyPart.LEFT_UPPER_ARM,
+  right_elbow: BodyPart.RIGHT_UPPER_ARM,
+  left_hand: BodyPart.LEFT_HAND,
+  right_hand: BodyPart.RIGHT_HAND,
+};
+
+export const RETARGET_ROLE_LABEL: Record<TrackerRetargetRole, string> = {
+  waist: 'Hip / Waist',
+  chest: 'Chest',
+  left_knee: 'Left knee',
+  right_knee: 'Right knee',
+  left_foot: 'Left foot',
+  right_foot: 'Right foot',
+  left_elbow: 'Left elbow',
+  right_elbow: 'Right elbow',
+  left_hand: 'Left hand',
+  right_hand: 'Right hand',
+};
+
+const defaultAdjustment = (): TrackerRetargetAdjustment => ({
+  enabled: false,
+  x: 0,
+  y: 0,
+  z: 0,
+  space: 'body_yaw',
+});
+
+export const makeDefaultTrackerRetargetConfig = (): TrackerRetargetConfig => ({
+  enabled: false,
+  hipFloorLiftWeight: 0,
+  trackers: Object.fromEntries(
+    RETARGET_ROLES.map((role) => [role, defaultAdjustment()])
+  ) as Record<TrackerRetargetRole, TrackerRetargetAdjustment>,
+});
+
+type TrackerRetargetMessage = Partial<TrackerRetargetConfig> & {
+  type?: string;
+  trackers?: Partial<
+    Record<TrackerRetargetRole, Partial<TrackerRetargetAdjustment>>
+  >;
+};
+
+function finiteNumber(value: unknown, fallback: number) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+export function normalizeTrackerRetargetConfig(
+  message: TrackerRetargetMessage
+): TrackerRetargetConfig {
+  const defaults = makeDefaultTrackerRetargetConfig();
+
+  const trackers = Object.fromEntries(
+    RETARGET_ROLES.map((role) => {
+      const current = message.trackers?.[role];
+      const fallback = defaults.trackers[role];
+
+      return [
+        role,
+        {
+          enabled:
+            typeof current?.enabled === 'boolean'
+              ? current.enabled
+              : fallback.enabled,
+          x: finiteNumber(current?.x, fallback.x),
+          y: finiteNumber(current?.y, fallback.y),
+          z: finiteNumber(current?.z, fallback.z),
+          space: current?.space === 'world' ? 'world' : 'body_yaw',
+        },
+      ];
+    })
+  ) as Record<TrackerRetargetRole, TrackerRetargetAdjustment>;
+
+  return {
+    enabled:
+      typeof message.enabled === 'boolean' ? message.enabled : defaults.enabled,
+    hipFloorLiftWeight: Math.min(
+      1,
+      Math.max(
+        0,
+        finiteNumber(
+          message.hipFloorLiftWeight,
+          defaults.hipFloorLiftWeight
+        )
+      )
+    ),
+    trackers,
+  };
+}
+
+export function useTrackerRetargeting() {
+  const { isConnected, useTextPacket, sendTextPacket } = useWebsocketAPI();
+  const [config, setConfig] = useState<TrackerRetargetConfig>(
+    makeDefaultTrackerRetargetConfig
+  );
+  const [loaded, setLoaded] = useState(false);
+
+  useTextPacket<TrackerRetargetMessage>('retarget_config', (message) => {
+    setConfig(normalizeTrackerRetargetConfig(message));
+    setLoaded(true);
+  });
+
+  useEffect(() => {
+    if (!isConnected) return;
+    sendTextPacket({ type: 'retarget_get' });
+  }, [isConnected]);
+
+  const updateConfig = (nextConfig: TrackerRetargetConfig) => {
+    const normalized = normalizeTrackerRetargetConfig(nextConfig);
+    setConfig(normalized);
+    sendTextPacket({
+      type: 'retarget_set',
+      enabled: normalized.enabled,
+      hipFloorLiftWeight: normalized.hipFloorLiftWeight,
+      trackers: normalized.trackers,
+    });
+  };
+
+  return {
+    config,
+    loaded,
+    updateConfig,
+    refresh: () => sendTextPacket({ type: 'retarget_get' }),
+  };
+}
