@@ -33,6 +33,13 @@ public class BridgeConfig {
 	public boolean springBonesEnabled = false;
 
 	/**
+	 * Prefer physical IMU acceleration as the transient spring driver when a
+	 * usable sensor is assigned to the corresponding body point. The spring
+	 * processor automatically falls back to solved-position motion otherwise.
+	 */
+	public boolean springBonesUseAcceleration = false;
+
+	/**
 	 * Per-role spring settings. Rotation is never modified by this layer.
 	 */
 	public Map<String, TrackerSpringBoneConfig> trackerSpringBones = new HashMap<>();
