@@ -124,6 +124,7 @@ export function TrackerRetargetingSettings() {
     useTrackerRetargeting();
   const [selectedRole, setSelectedRole] =
     useState<TrackerRetargetRole>('waist');
+  const [showSpineNodes, setShowSpineNodes] = useState(true);
   const [showSourceTargets, setShowSourceTargets] = useState(true);
   const [showRetargetTargets, setShowRetargetTargets] = useState(true);
   const [showDisplacementLines, setShowDisplacementLines] = useState(true);
@@ -533,7 +534,17 @@ export function TrackerRetargetingSettings() {
           <div className="lg:sticky lg:top-2 self-start flex flex-col gap-2">
             <div className="bg-background-60 rounded-lg p-3 flex flex-col gap-2">
               <Typography variant="section-title">Visualizer layers</Typography>
-              <div className="grid sm:grid-cols-3 gap-2">
+              <div className="grid sm:grid-cols-2 gap-2">
+                <CheckboxInternal
+                  name="show-spine-nodes"
+                  variant="toggle"
+                  outlined
+                  label="Spine joints"
+                  checked={showSpineNodes}
+                  onChange={(event) =>
+                    setShowSpineNodes(event.currentTarget.checked)
+                  }
+                />
                 <CheckboxInternal
                   name="show-source-targets"
                   variant="toggle"
@@ -577,6 +588,7 @@ export function TrackerRetargetingSettings() {
               <SkeletonVisualizerWidget
                 retargetConfig={config}
                 selectedRetargetRole={selectedRole}
+                showSpineNodes={showSpineNodes}
                 showSourceTargets={showSourceTargets}
                 showRetargetTargets={showRetargetTargets}
                 showDisplacementLines={showDisplacementLines}
@@ -596,8 +608,8 @@ export function TrackerRetargetingSettings() {
 
               <div className="absolute bottom-3 left-3 right-3 bg-background-80/90 rounded-lg p-3 pointer-events-none flex flex-col gap-1">
                 <Typography bold>
-                  Wireframe = SlimeVR source · Cyan = virtual target · Yellow =
-                  selected virtual target
+                  White joints = spine anchors · Wireframe = SlimeVR source ·
+                  Cyan = virtual target · Yellow = selected virtual target
                 </Typography>
                 <Typography color="secondary">
                   The colored skeleton is the articulated anatomical solve.
