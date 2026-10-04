@@ -179,6 +179,42 @@ class TrackerSpringBoneProcessorTests {
 	}
 
 	@Test
+	fun snapOnlyDerivativeDriverRespondsToJerkChange() {
+		val processor = TrackerSpringBoneProcessor()
+		val config = TrackerSpringBoneConfig(true, 0.03f, 10f, 1f).apply {
+			derivativeDriverEnabled = true
+			accelerationWeight = 0f
+			jerkWeight = 0f
+			snapWeight = 1f
+			derivativeResponse = 0.7f
+		}
+		val source = Vector3(1f, 2f, 3f)
+
+		var time = 1_000_000_000L
+		processor.apply(role, source, config, time, accelerationY = 1f)
+
+		time += 16_666_667L
+		processor.apply(role, source, config, time, accelerationY = 1f)
+
+		time += 16_666_667L
+		processor.apply(role, source, config, time, accelerationY = 1f)
+
+		time += 16_666_667L
+		val output = processor.apply(
+			role,
+			source,
+			config,
+			time,
+			accelerationY = 1.6f,
+		)
+
+		assertEquals(source.x, output.x)
+		assertEquals(source.z, output.z)
+		assertTrue(output.y != source.y)
+		assertTrue(abs(output.y - source.y) <= config.distance + 1e-5f)
+	}
+
+	@Test
 	fun springStateIsIndependentPerTrackerRole() {
 		val processor = TrackerSpringBoneProcessor()
 		val config = TrackerSpringBoneConfig(true, 0.05f, 10f, 1f)
