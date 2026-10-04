@@ -161,6 +161,67 @@ export function TrackerRetargetingSettings() {
 
             <div className="bg-background-60 rounded-lg p-3 flex flex-col gap-3">
               <Typography variant="section-title">
+                Articulated spine
+              </Typography>
+              <Typography color="secondary">
+                Treat upper chest, chest, waist, and hip as separate rotation
+                samples. Directly tracked torso bones stay exact; only missing
+                bones are filled between neighboring anchors.
+              </Typography>
+              <CheckboxInternal
+                name="spine-articulation-enabled"
+                variant="toggle"
+                outlined
+                label="Distribute bend across untracked spine segments"
+                checked={config.spineArticulationEnabled}
+                onChange={(event) =>
+                  updateConfig({
+                    ...config,
+                    spineArticulationEnabled: event.currentTarget.checked,
+                  })
+                }
+              />
+              <div className="flex flex-col gap-2">
+                <div className="flex justify-between gap-3">
+                  <Typography bold>Spine bend distribution</Typography>
+                  <Typography>
+                    {config.spineCurvePower.toFixed(2)}
+                  </Typography>
+                </div>
+                <input
+                  className="w-full"
+                  type="range"
+                  min={0.25}
+                  max={2.5}
+                  step={0.05}
+                  value={config.spineCurvePower}
+                  disabled={!config.spineArticulationEnabled}
+                  onChange={(event) =>
+                    updateConfig({
+                      ...config,
+                      spineCurvePower: Number(event.currentTarget.value),
+                    })
+                  }
+                />
+                <div className="flex justify-between gap-3">
+                  <Typography color="secondary">
+                    Earlier / more distributed bend
+                  </Typography>
+                  <Typography color="secondary">
+                    Later / more pelvis-local bend
+                  </Typography>
+                </div>
+                <Typography color="secondary">
+                  1.00 follows the actual configured spine segment lengths.
+                  Values below 1 spread rotation upward sooner; values above 1
+                  keep the upper torso more rigid and move more of the bend
+                  toward the lower anchor.
+                </Typography>
+              </div>
+            </div>
+
+            <div className="bg-background-60 rounded-lg p-3 flex flex-col gap-3">
+              <Typography variant="section-title">
                 Lower-body ground behavior
               </Typography>
               <Typography color="secondary">
