@@ -196,3 +196,43 @@ The same page exposes:
 The virtual preview can remain visible while live SteamVR output is in Physical
 mode. This is intentional so avatar targets can be adjusted without disturbing
 the calibration/reference output.
+
+
+## Spring Bones
+
+The Custom IK workspace now has a dedicated **Spring Bones** subtab.
+
+Spring Bones adds bounded secondary motion after the normal anatomical solve and
+after optional position retargeting, immediately before SteamVR serialization.
+
+The processing order is:
+
+`computed position -> optional retarget position -> Y spring -> SteamVR XYZ`
+
+Rotation bypasses the spring completely:
+
+`computed quaternion -> SteamVR quaternion`
+
+Each supported exported tracker role can independently enable a spring with:
+
+- **Spring distance** — hard maximum vertical displacement above/below the
+  solved point.
+- **Strength** — return stiffness. Higher values return faster with a tighter
+  oscillation.
+- **Pull** — coupling from changes in solved vertical velocity into spring
+  velocity.
+
+The spring is impulse-driven rather than a simple positional smoothing filter.
+Slow steady body motion therefore stays close to the anatomical solve, while
+starts/stops, crouches, bends, landings, and other vertical acceleration changes
+can produce small secondary motion.
+
+Only world Y is modified. X, Z, the anatomical skeleton, calibration state, and
+tracker quaternions are unchanged.
+
+The runtime spring is bounded and resets after a long frame gap so resuming a
+paused/stalled bridge cannot create a large accumulated impulse.
+
+The Spring Bones visualizer shows a magenta line around the selected tracker
+anchor representing its configured +/- travel limit. Individual roles default
+to disabled, and the global Spring Bones output toggle also defaults to off.
