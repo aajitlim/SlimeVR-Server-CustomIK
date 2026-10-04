@@ -78,12 +78,17 @@ export const makeDefaultTrackerRetargetConfig = (): TrackerRetargetConfig => ({
   ) as Record<TrackerRetargetRole, TrackerRetargetAdjustment>,
 });
 
-type TrackerRetargetMessage = Partial<TrackerRetargetConfig> & {
+type TrackerRetargetMessage = Omit<
+  Partial<TrackerRetargetConfig>,
+  'trackers'
+> & {
   type?: string;
   trackers?: Partial<
     Record<TrackerRetargetRole, Partial<TrackerRetargetAdjustment>>
   >;
 };
+
+export type TrackerRetargetSyncState = 'loading' | 'saving' | 'synced';
 
 function finiteNumber(value: unknown, fallback: number) {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
@@ -149,10 +154,13 @@ export function useTrackerRetargeting() {
     makeDefaultTrackerRetargetConfig
   );
   const [loaded, setLoaded] = useState(false);
+  const [syncState, setSyncState] =
+    useState<TrackerRetargetSyncState>('loading');
 
   useTextPacket<TrackerRetargetMessage>('retarget_config', (message) => {
     setConfig(normalizeTrackerRetargetConfig(message));
     setLoaded(true);
+    setSyncState('synced');
   });
 
   useEffect(() => {
@@ -163,6 +171,7 @@ export function useTrackerRetargeting() {
   const updateConfig = (nextConfig: TrackerRetargetConfig) => {
     const normalized = normalizeTrackerRetargetConfig(nextConfig);
     setConfig(normalized);
+    setSyncState('saving');
     sendTextPacket({
       type: 'retarget_set',
       enabled: normalized.enabled,
@@ -176,7 +185,11 @@ export function useTrackerRetargeting() {
   return {
     config,
     loaded,
+    syncState,
     updateConfig,
-    refresh: () => sendTextPacket({ type: 'retarget_get' }),
+    refresh: () => {
+      setSyncState('loading');
+      sendTextPacket({ type: 'retarget_get' });
+    },
   };
 }
