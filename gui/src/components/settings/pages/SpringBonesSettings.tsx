@@ -1,7 +1,6 @@
 import { Button } from '@/components/commons/Button';
 import { CheckboxInternal } from '@/components/commons/Checkbox';
 import { Typography } from '@/components/commons/Typography';
-import { SkeletonVisualizerWidget } from '@/components/widgets/SkeletonVisualizerWidget';
 import { SpringBoneCloseupWidget } from '@/components/widgets/SpringBoneCloseupWidget';
 import {
   RETARGET_ROLES,
@@ -313,43 +312,20 @@ export function SpringBonesSettings({
 
       <div className="lg:sticky lg:top-2 self-start flex flex-col gap-4">
         <div className="bg-background-60 rounded-lg p-3 flex flex-col gap-2">
-          <Typography variant="section-title">Disc / body view</Typography>
-          <Typography color="secondary">
-            Use the body view to confirm which exported tracker point you are
-            editing and where its solved/virtual disc sits on the skeleton.
-          </Typography>
-        </div>
-
-        <div className="relative rounded-lg overflow-hidden bg-background-60 h-[360px]">
-          <SkeletonVisualizerWidget
-            retargetConfig={config}
-            selectedRetargetRole={selectedRole}
-            showSpineNodes
-            showSourceTargets
-            showRetargetTargets
-            showDisplacementLines={false}
-            previewConfiguredOffsets
-          />
-
-          <div className="absolute bottom-3 left-3 right-3 bg-background-80/90 rounded-lg p-3 pointer-events-none">
-            <Typography bold>
-              Yellow = selected virtual disc · Wireframe = solved source disc
-            </Typography>
-            <Typography color="secondary">
-              This view answers where the spring point is attached to the body.
-            </Typography>
-          </div>
-        </div>
-
-        <div className="bg-background-60 rounded-lg p-3 flex flex-col gap-2">
           <Typography variant="section-title">Spring motion close-up</Typography>
           <Typography color="secondary">
-            This second renderer isolates the selected disc so its radius,
-            vertical travel, and spring response are large enough to inspect.
+            The full body/disc placement visualizer lives on Retargeting /
+            Spine. This renderer is intentionally isolated to the selected
+            spring point so its radius, Y travel, and oscillator response are
+            easy to inspect.
           </Typography>
         </div>
 
-        <SpringBoneCloseupWidget role={selectedRole} spring={spring} />
+        <SpringBoneCloseupWidget
+          key={selectedRole}
+          role={selectedRole}
+          spring={spring}
+        />
       </div>
     </div>
   );
