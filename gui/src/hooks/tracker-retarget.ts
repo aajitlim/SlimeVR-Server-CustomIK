@@ -38,6 +38,32 @@ export type TrackerSpringBoneAdjustment = {
   derivativeResponse: number;
 };
 
+export const BONE_COMPLIANCE_SEGMENTS = [
+  'upper_chest_to_chest',
+  'chest_to_waist',
+  'waist_to_hip',
+] as const;
+
+export type BoneComplianceSegmentKey =
+  (typeof BONE_COMPLIANCE_SEGMENTS)[number];
+
+export type BoneComplianceSegmentAdjustment = {
+  enabled: boolean;
+  compliance: number;
+  compressionLimit: number;
+  extensionLimit: number;
+  sensorInfluence: number;
+};
+
+export const BONE_COMPLIANCE_SEGMENT_LABEL: Record<
+  BoneComplianceSegmentKey,
+  string
+> = {
+  upper_chest_to_chest: 'Upper chest → Chest',
+  chest_to_waist: 'Chest → Waist',
+  waist_to_hip: 'Waist → Hip',
+};
+
 export type TrackerRetargetConfig = {
   enabled: boolean;
   hipFloorLiftWeight: number;
@@ -45,8 +71,16 @@ export type TrackerRetargetConfig = {
   spineCurvePower: number;
   springBonesEnabled: boolean;
   springBonesUseAcceleration: boolean;
+  boneComplianceEnabled: boolean;
+  boneComplianceOverall: number;
+  boneCompliancePreserveTorsoLength: boolean;
+  boneComplianceResponse: number;
   trackers: Record<TrackerRetargetRole, TrackerRetargetAdjustment>;
   springBones: Record<TrackerRetargetRole, TrackerSpringBoneAdjustment>;
+  boneComplianceSegments: Record<
+    BoneComplianceSegmentKey,
+    BoneComplianceSegmentAdjustment
+  >;
 };
 
 export const RETARGET_ROLE_BODY_PART: Record<TrackerRetargetRole, BodyPart> = {
@@ -95,6 +129,37 @@ const defaultSpringBone = (): TrackerSpringBoneAdjustment => ({
   derivativeResponse: 0.55,
 });
 
+const defaultBoneComplianceSegment = (
+  key: BoneComplianceSegmentKey
+): BoneComplianceSegmentAdjustment => {
+  switch (key) {
+    case 'upper_chest_to_chest':
+      return {
+        enabled: true,
+        compliance: 0.45,
+        compressionLimit: 0.025,
+        extensionLimit: 0.015,
+        sensorInfluence: 0.35,
+      };
+    case 'chest_to_waist':
+      return {
+        enabled: true,
+        compliance: 0.65,
+        compressionLimit: 0.04,
+        extensionLimit: 0.025,
+        sensorInfluence: 0.55,
+      };
+    case 'waist_to_hip':
+      return {
+        enabled: true,
+        compliance: 0.55,
+        compressionLimit: 0.035,
+        extensionLimit: 0.02,
+        sensorInfluence: 0.5,
+      };
+  }
+};
+
 export const makeDefaultTrackerRetargetConfig = (): TrackerRetargetConfig => ({
   enabled: false,
   hipFloorLiftWeight: 0,
@@ -102,17 +167,27 @@ export const makeDefaultTrackerRetargetConfig = (): TrackerRetargetConfig => ({
   spineCurvePower: 1,
   springBonesEnabled: false,
   springBonesUseAcceleration: false,
+  boneComplianceEnabled: false,
+  boneComplianceOverall: 0.5,
+  boneCompliancePreserveTorsoLength: true,
+  boneComplianceResponse: 0.5,
   trackers: Object.fromEntries(
     RETARGET_ROLES.map((role) => [role, defaultAdjustment()])
   ) as Record<TrackerRetargetRole, TrackerRetargetAdjustment>,
   springBones: Object.fromEntries(
     RETARGET_ROLES.map((role) => [role, defaultSpringBone()])
   ) as Record<TrackerRetargetRole, TrackerSpringBoneAdjustment>,
+  boneComplianceSegments: Object.fromEntries(
+    BONE_COMPLIANCE_SEGMENTS.map((key) => [
+      key,
+      defaultBoneComplianceSegment(key),
+    ])
+  ) as Record<BoneComplianceSegmentKey, BoneComplianceSegmentAdjustment>,
 });
 
 type TrackerRetargetMessage = Omit<
   Partial<TrackerRetargetConfig>,
-  'trackers' | 'springBones'
+  'trackers' | 'springBones' | 'boneComplianceSegments'
 > & {
   type?: string;
   trackers?: Partial<
@@ -120,6 +195,12 @@ type TrackerRetargetMessage = Omit<
   >;
   springBones?: Partial<
     Record<TrackerRetargetRole, Partial<TrackerSpringBoneAdjustment>>
+  >;
+  boneComplianceSegments?: Partial<
+    Record<
+      BoneComplianceSegmentKey,
+      Partial<BoneComplianceSegmentAdjustment>
+    >
   >;
 };
 
@@ -216,6 +297,60 @@ export function normalizeTrackerRetargetConfig(
     })
   ) as Record<TrackerRetargetRole, TrackerSpringBoneAdjustment>;
 
+  const boneComplianceSegments = Object.fromEntries(
+    BONE_COMPLIANCE_SEGMENTS.map((key) => {
+      const current = message.boneComplianceSegments?.[key];
+      const fallback = defaults.boneComplianceSegments[key];
+
+      return [
+        key,
+        {
+          enabled:
+            typeof current?.enabled === 'boolean'
+              ? current.enabled
+              : fallback.enabled,
+          compliance: Math.min(
+            1,
+            Math.max(
+              0,
+              finiteNumber(current?.compliance, fallback.compliance)
+            )
+          ),
+          compressionLimit: Math.min(
+            0.12,
+            Math.max(
+              0,
+              finiteNumber(
+                current?.compressionLimit,
+                fallback.compressionLimit
+              )
+            )
+          ),
+          extensionLimit: Math.min(
+            0.12,
+            Math.max(
+              0,
+              finiteNumber(
+                current?.extensionLimit,
+                fallback.extensionLimit
+              )
+            )
+          ),
+          sensorInfluence: Math.min(
+            1,
+            Math.max(
+              0,
+              finiteNumber(
+                current?.sensorInfluence,
+                fallback.sensorInfluence
+              )
+            )
+          ),
+        },
+      ];
+    })
+  ) as Record<BoneComplianceSegmentKey, BoneComplianceSegmentAdjustment>;
+
   return {
     enabled:
       typeof message.enabled === 'boolean' ? message.enabled : defaults.enabled,
@@ -248,8 +383,37 @@ export function normalizeTrackerRetargetConfig(
       typeof message.springBonesUseAcceleration === 'boolean'
         ? message.springBonesUseAcceleration
         : defaults.springBonesUseAcceleration,
+    boneComplianceEnabled:
+      typeof message.boneComplianceEnabled === 'boolean'
+        ? message.boneComplianceEnabled
+        : defaults.boneComplianceEnabled,
+    boneComplianceOverall: Math.min(
+      1,
+      Math.max(
+        0,
+        finiteNumber(
+          message.boneComplianceOverall,
+          defaults.boneComplianceOverall
+        )
+      )
+    ),
+    boneCompliancePreserveTorsoLength:
+      typeof message.boneCompliancePreserveTorsoLength === 'boolean'
+        ? message.boneCompliancePreserveTorsoLength
+        : defaults.boneCompliancePreserveTorsoLength,
+    boneComplianceResponse: Math.min(
+      1,
+      Math.max(
+        0,
+        finiteNumber(
+          message.boneComplianceResponse,
+          defaults.boneComplianceResponse
+        )
+      )
+    ),
     trackers,
     springBones,
+    boneComplianceSegments,
   };
 }
 
@@ -285,8 +449,14 @@ export function useTrackerRetargeting() {
       spineCurvePower: normalized.spineCurvePower,
       springBonesEnabled: normalized.springBonesEnabled,
       springBonesUseAcceleration: normalized.springBonesUseAcceleration,
+      boneComplianceEnabled: normalized.boneComplianceEnabled,
+      boneComplianceOverall: normalized.boneComplianceOverall,
+      boneCompliancePreserveTorsoLength:
+        normalized.boneCompliancePreserveTorsoLength,
+      boneComplianceResponse: normalized.boneComplianceResponse,
       trackers: normalized.trackers,
       springBones: normalized.springBones,
+      boneComplianceSegments: normalized.boneComplianceSegments,
     });
   };
 
