@@ -918,9 +918,103 @@ class HumanSkeleton(
 			hipTrackerBone.setRotation(newHipRot)
 		}
 
+		// Custom articulated spine model. Direct tracker rotations stay
+		// authoritative; only missing torso segments are distributed between
+		// neighboring tracked/inferred anchors.
+		applyArticulatedSpineModel()
+
 		// Set left and right hip rotations to the hip's
 		leftHipBone.setRotation(hipBone.getLocalRotation())
 		rightHipBone.setRotation(hipBone.getLocalRotation())
+	}
+
+	private fun applyArticulatedSpineModel() {
+		val config = humanPoseManager.server?.configManager?.vrConfig?.spineArticulation ?: return
+		if (!config.enabled) return
+
+		val upperChestLength = upperChestBone.length
+		val chestLength = chestBone.length
+		val waistLength = waistBone.length
+		val hipLength = hipBone.length
+		val totalLength = upperChestLength + chestLength + waistLength + hipLength
+		if (totalLength <= 1e-6f) return
+
+		// Use segment centers as the physical locations of the rotation samples.
+		// This keeps interpolation proportional to the user's configured torso
+		// lengths instead of relying on one fixed waist blend ratio.
+		val upperChestPosition = (upperChestLength * 0.5f) / totalLength
+		val chestPosition = (upperChestLength + chestLength * 0.5f) / totalLength
+		val waistPosition =
+			(upperChestLength + chestLength + waistLength * 0.5f) / totalLength
+		val hipPosition =
+			(upperChestLength + chestLength + waistLength + hipLength * 0.5f) /
+				totalLength
+
+		val anchors = mutableListOf<SpineRotationAnchor>()
+		upperChestTracker?.let {
+			anchors.add(SpineRotationAnchor(upperChestPosition, it.getRotation()))
+		}
+		chestTracker?.let {
+			anchors.add(SpineRotationAnchor(chestPosition, it.getRotation()))
+		}
+		waistTracker?.let {
+			anchors.add(SpineRotationAnchor(waistPosition, it.getRotation()))
+		}
+		hipTracker?.let {
+			anchors.add(SpineRotationAnchor(hipPosition, it.getRotation()))
+		} ?: run {
+			// If the extended pelvis model inferred a pelvis from the legs, use
+			// that result as the lower spine anchor without pretending it was a
+			// directly tracked hip.
+			if (hasKneeTrackers) {
+				anchors.add(
+					SpineRotationAnchor(
+						hipPosition,
+						hipBone.getLocalRotation(),
+					),
+				)
+			}
+		}
+
+		if (anchors.size < 2) return
+
+		if (upperChestTracker == null) {
+			upperChestBone.setRotation(
+				SpineRotationDistributor.sample(
+					anchors,
+					upperChestPosition,
+					config.curvePower,
+				),
+			)
+		}
+		if (chestTracker == null) {
+			chestBone.setRotation(
+				SpineRotationDistributor.sample(
+					anchors,
+					chestPosition,
+					config.curvePower,
+				),
+			)
+		}
+		if (waistTracker == null) {
+			waistBone.setRotation(
+				SpineRotationDistributor.sample(
+					anchors,
+					waistPosition,
+					config.curvePower,
+				),
+			)
+		}
+		if (hipTracker == null) {
+			hipBone.setRotation(
+				SpineRotationDistributor.sample(
+					anchors,
+					hipPosition,
+					config.curvePower,
+				),
+			)
+			hipTrackerBone.setRotation(hipBone.getLocalRotation())
+		}
 	}
 
 	/**
