@@ -7,6 +7,7 @@ import dev.slimevr.VRServer.Companion.getNextLocalTrackerId
 import dev.slimevr.VRServer.Companion.instance
 import dev.slimevr.bridge.Bridge
 import dev.slimevr.config.TrackerPositionAdjustmentConfig
+import dev.slimevr.config.TrackerSpringBoneConfig
 import dev.slimevr.tracking.trackers.DeviceOrigin
 import dev.slimevr.tracking.trackers.Tracker
 import dev.slimevr.tracking.trackers.TrackerPosition
@@ -205,6 +206,36 @@ class WebSocketVRBridge(
 			bridgeConfig.setTrackerPositionOffset(role, current)
 		}
 
+		if (json.has("springBonesEnabled")) {
+			bridgeConfig.springBonesEnabled = json["springBonesEnabled"].asBoolean()
+		}
+
+		val springBones = json["springBones"] as? ObjectNode
+		springBones?.fields()?.forEach { (roleKey, value) ->
+			val role = try {
+				TrackerRole.valueOf(roleKey.uppercase(Locale.ROOT))
+			} catch (_: IllegalArgumentException) {
+				null
+			} ?: return@forEach
+
+			val springNode = value as? ObjectNode ?: return@forEach
+			val current = bridgeConfig.getTrackerSpringBone(role)
+				?: TrackerSpringBoneConfig()
+
+			if (springNode.has("enabled")) current.enabled = springNode["enabled"].asBoolean()
+			if (springNode.has("distance")) {
+				current.distance = springNode["distance"].asDouble().toFloat().coerceIn(0f, 0.25f)
+			}
+			if (springNode.has("strength")) {
+				current.strength = springNode["strength"].asDouble().toFloat().coerceIn(1f, 30f)
+			}
+			if (springNode.has("pull")) {
+				current.pull = springNode["pull"].asDouble().toFloat().coerceIn(0f, 2f)
+			}
+
+			bridgeConfig.setTrackerSpringBone(role, current)
+		}
+
 		if (json.has("hipFloorLiftWeight")) {
 			server.configManager.vrConfig.legTweaks.hipFloorLiftWeight =
 				json["hipFloorLiftWeight"].asDouble().toFloat().coerceIn(0f, 1f)
@@ -228,6 +259,7 @@ class WebSocketVRBridge(
 		val response = mapper.nodeFactory.objectNode()
 		response.put("type", "retarget_config")
 		response.put("enabled", bridgeConfig.positionRetargetingEnabled)
+		response.put("springBonesEnabled", bridgeConfig.springBonesEnabled)
 		response.put(
 			"hipFloorLiftWeight",
 			server.configManager.vrConfig.legTweaks.hipFloorLiftWeight,
@@ -254,6 +286,19 @@ class WebSocketVRBridge(
 			trackers.set<ObjectNode>(role.name.lowercase(Locale.ROOT), tracker)
 		}
 		response.set<ObjectNode>("trackers", trackers)
+
+		val springBones = mapper.nodeFactory.objectNode()
+		for (role in RETARGET_ROLES) {
+			val spring = bridgeConfig.getTrackerSpringBone(role)
+				?: TrackerSpringBoneConfig()
+			val springNode = mapper.nodeFactory.objectNode()
+			springNode.put("enabled", spring.enabled)
+			springNode.put("distance", spring.distance)
+			springNode.put("strength", spring.strength)
+			springNode.put("pull", spring.pull)
+			springBones.set<ObjectNode>(role.name.lowercase(Locale.ROOT), springNode)
+		}
+		response.set<ObjectNode>("springBones", springBones)
 		conn.send(response.toString())
 	}
 
