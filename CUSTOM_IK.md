@@ -102,3 +102,36 @@ visually separate from rotational tracking.
 The editor communicates over a small JSON text channel on the existing
 websocket. Existing SolarXR binary protocol messages are unchanged, which keeps
 this fork easier to rebase onto upstream SlimeVR.
+
+
+## Articulated spine
+
+The stock extended-spine model fills missing torso trackers with a small set of
+special-case blends. In the common chest + hip case, the waist defaults to a
+fixed chest-to-hip interpolation while the chest segments remain locked to the
+chest orientation. This concentrates a large amount of angular change near the
+pelvis.
+
+The custom branch adds an articulated missing-segment solver over the existing
+four torso bones:
+
+`upperChest -> chest -> waist -> hip`
+
+Every directly tracked torso bone remains authoritative. Missing bones are
+sampled between the neighboring available anchors according to the configured
+physical segment lengths. An inferred pelvis from the existing extended pelvis
+model can also act as the lower anchor when no physical hip tracker is present.
+
+With the stock torso lengths, a missing waist lies about 60% of the way between
+the chest and hip rotation samples instead of the previous fixed 30% blend.
+This spreads forward bend through the lumbar chain instead of leaving most of
+the change for the hip.
+
+The GUI exposes:
+
+- **Distribute bend across untracked spine segments**
+- **Spine bend distribution**
+
+A curve power of `1.0` is length-linear. Values below `1.0` spread the bend
+upward sooner; values above `1.0` keep the upper torso stiffer and move more of
+the bend toward the lower anchor.
