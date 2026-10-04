@@ -236,6 +236,26 @@ class WebSocketVRBridge(
 			if (springNode.has("pull")) {
 				current.pull = springNode["pull"].asDouble().toFloat().coerceIn(0f, 2f)
 			}
+			if (springNode.has("derivativeDriverEnabled")) {
+				current.derivativeDriverEnabled =
+					springNode["derivativeDriverEnabled"].asBoolean()
+			}
+			if (springNode.has("accelerationWeight")) {
+				current.accelerationWeight =
+					springNode["accelerationWeight"].asDouble().toFloat().coerceIn(0f, 2f)
+			}
+			if (springNode.has("jerkWeight")) {
+				current.jerkWeight =
+					springNode["jerkWeight"].asDouble().toFloat().coerceIn(0f, 2f)
+			}
+			if (springNode.has("snapWeight")) {
+				current.snapWeight =
+					springNode["snapWeight"].asDouble().toFloat().coerceIn(0f, 2f)
+			}
+			if (springNode.has("derivativeResponse")) {
+				current.derivativeResponse =
+					springNode["derivativeResponse"].asDouble().toFloat().coerceIn(0f, 1f)
+			}
 
 			bridgeConfig.setTrackerSpringBone(role, current)
 		}
@@ -304,6 +324,11 @@ class WebSocketVRBridge(
 			springNode.put("distance", spring.distance)
 			springNode.put("strength", spring.strength)
 			springNode.put("pull", spring.pull)
+			springNode.put("derivativeDriverEnabled", spring.derivativeDriverEnabled)
+			springNode.put("accelerationWeight", spring.accelerationWeight)
+			springNode.put("jerkWeight", spring.jerkWeight)
+			springNode.put("snapWeight", spring.snapWeight)
+			springNode.put("derivativeResponse", spring.derivativeResponse)
 			springBones.set<ObjectNode>(role.name.lowercase(Locale.ROOT), springNode)
 		}
 		response.set<ObjectNode>("springBones", springBones)
