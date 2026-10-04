@@ -39,6 +39,7 @@ export type TrackerRetargetConfig = {
   spineArticulationEnabled: boolean;
   spineCurvePower: number;
   springBonesEnabled: boolean;
+  springBonesUseAcceleration: boolean;
   trackers: Record<TrackerRetargetRole, TrackerRetargetAdjustment>;
   springBones: Record<TrackerRetargetRole, TrackerSpringBoneAdjustment>;
 };
@@ -90,6 +91,7 @@ export const makeDefaultTrackerRetargetConfig = (): TrackerRetargetConfig => ({
   spineArticulationEnabled: true,
   spineCurvePower: 1,
   springBonesEnabled: false,
+  springBonesUseAcceleration: false,
   trackers: Object.fromEntries(
     RETARGET_ROLES.map((role) => [role, defaultAdjustment()])
   ) as Record<TrackerRetargetRole, TrackerRetargetAdjustment>,
@@ -200,6 +202,10 @@ export function normalizeTrackerRetargetConfig(
       typeof message.springBonesEnabled === 'boolean'
         ? message.springBonesEnabled
         : defaults.springBonesEnabled,
+    springBonesUseAcceleration:
+      typeof message.springBonesUseAcceleration === 'boolean'
+        ? message.springBonesUseAcceleration
+        : defaults.springBonesUseAcceleration,
     trackers,
     springBones,
   };
@@ -236,6 +242,7 @@ export function useTrackerRetargeting() {
       spineArticulationEnabled: normalized.spineArticulationEnabled,
       spineCurvePower: normalized.spineCurvePower,
       springBonesEnabled: normalized.springBonesEnabled,
+      springBonesUseAcceleration: normalized.springBonesUseAcceleration,
       trackers: normalized.trackers,
       springBones: normalized.springBones,
     });
