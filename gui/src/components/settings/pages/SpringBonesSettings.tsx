@@ -123,6 +123,7 @@ export function SpringBonesSettings({
     updateConfig({
       ...config,
       springBonesEnabled: false,
+      springBonesUseAcceleration: false,
       springBones: Object.fromEntries(
         RETARGET_ROLES.map((role) => [
           role,
@@ -162,10 +163,25 @@ export function SpringBonesSettings({
             }
           />
 
+          <CheckboxInternal
+            name="spring-bones-use-acceleration"
+            variant="toggle"
+            outlined
+            label="Use physical IMU accelerometer when available"
+            checked={config.springBonesUseAcceleration}
+            onChange={(event) =>
+              updateConfig({
+                ...config,
+                springBonesUseAcceleration: event.currentTarget.checked,
+              })
+            }
+          />
+
           <Typography color="secondary">
-            The spring reacts to changes in vertical velocity. Slow steady
-            movement remains close to the solved point; starts, stops, bends and
-            impacts produce the secondary bounce.
+            Accelerometer mode uses gravity/bias-removed world-Y IMU motion as
+            the fast spring impulse while keeping the solved position as the
+            rest anchor. If no usable accelerometer is available for a point,
+            it automatically falls back to position-derived motion.
           </Typography>
         </div>
 
