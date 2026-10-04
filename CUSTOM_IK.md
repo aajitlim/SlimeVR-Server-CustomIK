@@ -314,6 +314,182 @@ The close-up renderer displays the selected driver mode as either:
 - **IMU preferred + fallback**, or
 - **Position derived**.
 
+### Acceleration derivative motion driver
+
+Spring Bones can optionally shape IMU excitation using a filtered acceleration
+derivative hierarchy:
+
+```text
+filtered acceleration A
+        |
+        v
+first derivative
+        |
+        v
+filtered jerk J
+        |
+        v
+second derivative
+        |
+        v
+filtered snap S
+```
+
+This is enabled per Spring Bone with:
+
+- **Use acceleration derivative motion driver**
+
+The derivative driver is only active when the global physical-IMU acceleration
+mode is enabled and a usable local acceleration source exists. If acceleration
+is unavailable, that tracker still falls back to its own independent
+position-derived spring driver.
+
+The default derivative influence mix is:
+
+```text
+Acceleration  0.20
+Jerk          0.70
+Snap          0.10
+```
+
+The three values are treated as relative weights and normalized before the
+combined drive is applied. Increasing all three values equally therefore does
+not accidentally multiply the spring force.
+
+#### Why derivatives are used
+
+Raw acceleration can remain elevated for several frames and continuously pump a
+spring. The first derivative of acceleration, jerk, emphasizes the beginning,
+ending, and reversal of a force instead:
+
+```text
+acceleration:
+      +------------+
+------+            +------
+
+jerk:
+      ^            v
+------+------------+------
+```
+
+The second derivative, snap, adds information about how sharply the jerk itself
+changes.
+
+This lets the spring respond strongly to motion transitions without treating a
+sustained acceleration plateau as an equally sustained secondary-motion force.
+
+#### Filtered derivative hierarchy
+
+Differentiation amplifies high-frequency IMU noise, so jerk and snap are never
+calculated from unfiltered raw acceleration.
+
+The runtime path is:
+
+```text
+physical IMU world-Y acceleration
+        |
+        v
+gravity / stationary-bias removal
+        |
+        v
+deadzone + bounded dynamic acceleration
+        |
+        v
+filtered A
+        |
+        +---- derivative ----> filtered J
+                                |
+                                +---- derivative ----> filtered S
+```
+
+Each derivative stage has its own low-pass filter.
+
+The **Motion response** control changes these filter rates:
+
+- lower values favor smoother, slower derivative estimates,
+- higher values preserve shorter and sharper motion transients.
+
+#### Unit normalization
+
+Acceleration, jerk, and snap have different physical units and cannot be added
+directly without one derivative order dominating numerically.
+
+The driver therefore converts jerk and snap back into acceleration-like
+normalized terms using a characteristic response time `tau`:
+
+```text
+A_term = A
+J_term = J * tau
+S_term = S * tau^2
+```
+
+The response control changes `tau` together with the derivative filter
+bandwidth.
+
+The weighted normalized drive is conceptually:
+
+```text
+drive =
+    (wa * A_term
+   + wj * J_term
+   + ws * S_term)
+    / (wa + wj + ws)
+```
+
+The combined result then passes through a smooth `tanh` saturation instead of
+a sharp hard clip before being converted into spring velocity.
+
+This preserves small-signal precision while preventing a noisy derivative spike
+from producing an extreme spring impulse.
+
+#### Independent derivative histories
+
+Every Spring Bone role owns its own acceleration, jerk, and snap history.
+
+For example:
+
+```text
+CHEST:
+  A_chest
+  J_chest
+  S_chest
+
+WAIST:
+  A_waist
+  J_waist
+  S_waist
+```
+
+Derivative state is never propagated down the skeleton and is never inherited
+from another Spring Bone.
+
+The already-strict physical IMU affinity rules remain in effect, so a chest
+spring does not borrow hip/waist acceleration merely to stay in accelerometer
+mode.
+
+This is specifically intended to prevent multiple torso springs from sharing
+one excitation source, drifting into different phases, and creating apparent
+destructive harmonics in downstream avatar IK.
+
+#### Derivative preview
+
+The Spring Bones close-up now contains a **Derivative preview** panel.
+
+It renders normalized bars for:
+
+- Acceleration
+- Jerk
+- Snap
+- Combined drive
+
+The close-up generates a deterministic synthetic acceleration pulse and runs it
+through the same filtering, derivative normalization, influence weighting, and
+soft-clamping structure used by the runtime Spring Bone driver.
+
+This remains a parameter preview rather than live tracker telemetry, but it
+makes the effect of the derivative mix and Smooth-to-Reactive response control
+visible without requiring repeated physical motion.
+
 ### Spring motion model
 
 The Spring Bone system is impulse-driven rather than being a simple positional
