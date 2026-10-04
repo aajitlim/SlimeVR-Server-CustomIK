@@ -2,7 +2,7 @@ import { app } from 'electron';
 import path, { join } from 'node:path';
 import { getPlatform } from './utils';
 import { glob } from 'glob';
-import { spawn } from 'node:child_process';
+import { spawn, execFileSync } from 'node:child_process';
 import javaVersionJar from '../resources/java-version/JavaVersion.jar?asset&asarUnpack';
 import { existsSync } from 'node:fs';
 import { options } from './cli';
@@ -72,10 +72,31 @@ const javaHomeBin = () => {
   return javaHomeJre;
 };
 
+const javaFromWindowsPath = () => {
+  if (getPlatform() !== 'windows') return null;
+
+  try {
+    const output = execFileSync('where.exe', ['java.exe'], {
+      encoding: 'utf-8',
+      windowsHide: true,
+    });
+
+    return (
+      output
+        .split(/\r?\n/)
+        .map((entry) => entry.trim())
+        .find((entry) => entry.length > 0 && existsSync(entry)) ?? null
+    );
+  } catch {
+    return null;
+  }
+};
+
 export const findSystemJRE = async (sharedDir: string) => {
   const paths = [
     localJavaBin(sharedDir),
     javaHomeBin(),
+    javaFromWindowsPath(),
     ...(await glob('/usr/lib/jvm/*/bin/' + javaBin)),
     ...(await glob('/Library/Java/JavaVirtualMachines/*/Contents/Home/bin/' + javaBin)),
   ];
