@@ -27,6 +27,16 @@ public class BridgeConfig {
 	 */
 	public Map<String, TrackerPositionAdjustmentConfig> trackerPositionOffsets = new HashMap<>();
 
+	/**
+	 * Enables bounded Y-axis-only secondary spring motion on exported trackers.
+	 */
+	public boolean springBonesEnabled = false;
+
+	/**
+	 * Per-role spring settings. Rotation is never modified by this layer.
+	 */
+	public Map<String, TrackerSpringBoneConfig> trackerSpringBones = new HashMap<>();
+
 	public BridgeConfig() {
 	}
 
@@ -54,6 +64,24 @@ public class BridgeConfig {
 
 	public Map<String, TrackerPositionAdjustmentConfig> getTrackerPositionOffsets() {
 		return trackerPositionOffsets;
+	}
+
+	public TrackerSpringBoneConfig getTrackerSpringBone(TrackerRole role) {
+		if (role == null) return null;
+		return trackerSpringBones.get(role.name().toLowerCase());
+	}
+
+	public void setTrackerSpringBone(TrackerRole role, TrackerSpringBoneConfig config) {
+		if (role == null) return;
+		if (config == null) {
+			trackerSpringBones.remove(role.name().toLowerCase());
+		} else {
+			trackerSpringBones.put(role.name().toLowerCase(), config);
+		}
+	}
+
+	public Map<String, TrackerSpringBoneConfig> getTrackerSpringBones() {
+		return trackerSpringBones;
 	}
 
 	public Map<String, Boolean> getTrackers() {
