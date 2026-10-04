@@ -153,6 +153,11 @@ abstract class SteamVRBridge(
 					role,
 					outputPosition,
 					springConfig,
+					accelerationY = if (config.springBonesUseAcceleration) {
+						getSpringAccelerationY(role)
+					} else {
+						null
+					},
 				)
 			} else {
 				springBoneProcessor.reset(role)
@@ -162,6 +167,68 @@ abstract class SteamVRBridge(
 		}
 
 		return outputPosition
+	}
+
+	private fun getSpringAccelerationY(role: TrackerRole): Float? {
+		val skeleton = server.humanPoseManager.skeleton
+		val candidates: Array<Tracker?> = when (role) {
+			TrackerRole.CHEST -> arrayOf(
+				skeleton.chestTracker,
+				skeleton.upperChestTracker,
+				skeleton.waistTracker,
+				skeleton.hipTracker,
+			)
+			TrackerRole.WAIST -> arrayOf(
+				skeleton.hipTracker,
+				skeleton.waistTracker,
+				skeleton.chestTracker,
+				skeleton.upperChestTracker,
+			)
+			TrackerRole.LEFT_KNEE -> arrayOf(
+				skeleton.leftLowerLegTracker,
+				skeleton.leftUpperLegTracker,
+				skeleton.leftFootTracker,
+			)
+			TrackerRole.RIGHT_KNEE -> arrayOf(
+				skeleton.rightLowerLegTracker,
+				skeleton.rightUpperLegTracker,
+				skeleton.rightFootTracker,
+			)
+			TrackerRole.LEFT_FOOT -> arrayOf(
+				skeleton.leftFootTracker,
+				skeleton.leftLowerLegTracker,
+			)
+			TrackerRole.RIGHT_FOOT -> arrayOf(
+				skeleton.rightFootTracker,
+				skeleton.rightLowerLegTracker,
+			)
+			TrackerRole.LEFT_ELBOW -> arrayOf(
+				skeleton.leftLowerArmTracker,
+				skeleton.leftUpperArmTracker,
+			)
+			TrackerRole.RIGHT_ELBOW -> arrayOf(
+				skeleton.rightLowerArmTracker,
+				skeleton.rightUpperArmTracker,
+			)
+			TrackerRole.LEFT_HAND -> arrayOf(
+				skeleton.leftHandTracker,
+				skeleton.leftLowerArmTracker,
+			)
+			TrackerRole.RIGHT_HAND -> arrayOf(
+				skeleton.rightHandTracker,
+				skeleton.rightLowerArmTracker,
+			)
+			else -> emptyArray()
+		}
+
+		for (tracker in candidates) {
+			if (tracker == null || !tracker.hasAcceleration) continue
+			val acceleration = tracker.getAcceleration()
+			if (acceleration == Vector3.NULL || !acceleration.y.isFinite()) continue
+			return acceleration.y
+		}
+
+		return null
 	}
 
 	@VRServerThread
