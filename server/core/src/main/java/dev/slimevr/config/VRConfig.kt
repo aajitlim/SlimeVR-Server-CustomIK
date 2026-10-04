@@ -36,6 +36,8 @@ class VRConfig {
 
 	val legTweaks: LegTweaksConfig = LegTweaksConfig()
 
+	val spineArticulation: SpineArticulationConfig = SpineArticulationConfig()
+
 	val tapDetection: TapDetectionConfig = TapDetectionConfig()
 
 	val resetsConfig: ResetsConfig = ResetsConfig()
