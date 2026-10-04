@@ -17,6 +17,388 @@ tracker point to the avatar's expected hip/knee/foot point should not bend or
 rotate SlimeVR's solved body to satisfy that game-space point.
 
 
+## Bone Compliance — physical torso strain solve
+
+This version adds a third **Custom IK** subtab:
+
+1. **Retargeting / Spine**
+2. **Spring Bones**
+3. **Bone Compliance**
+
+Bone Compliance is deliberately different from Spring Bones.
+
+Spring Bones are an output-only secondary-motion layer. Bone Compliance changes
+the effective axial lengths used by the physical anatomical torso solve before
+computed tracker positions are emitted.
+
+The runtime order is now:
+
+```text
+physical IMU rotations
+        |
+        v
+articulated spine rotations
+        |
+        v
+rotation constraints
+        |
+        v
+BONE COMPLIANCE
+        |
+        v
+computed physical tracker positions
+        |
+        v
+optional virtual position retarget
+        |
+        v
+optional Spring Bones
+        |
+        v
+SteamVR
+```
+
+Tracker rotations remain authoritative throughout this process. Bone Compliance
+never changes a tracker quaternion.
+
+### Why effective torso lengths are allowed to vary
+
+The calibrated torso segments in SlimeVR are abstract tracking distances rather
+than literal single bones. They include vertebral spacing, discs, soft tissue,
+tracker placement, posture, and estimation error.
+
+The compliance layer therefore permits only a small bounded change around each
+calibrated rest length:
+
+```text
+L = L_rest * (1 + strain)
+```
+
+where strain is tightly constrained.
+
+A value of:
+
+```text
+-0.03
+```
+
+means 3% effective compression, while:
+
+```text
++0.02
+```
+
+means 2% effective extension.
+
+This gives the positional solver an additional degree of freedom instead of
+forcing every residual into pelvis translation, knee straightening, or other
+large rigid-body corrections.
+
+### Compliant torso spans
+
+The first implementation intentionally limits physical length compliance to
+three torso spans:
+
+- Upper Chest -> Chest
+- Chest -> Waist
+- Waist -> Hip
+
+Long limb bones remain rigid:
+
+- femurs
+- tibias
+- upper arms
+- forearms
+- hands
+- feet
+
+This prevents normal tracking error from turning into physically implausible
+limb stretch.
+
+### Frame isolation
+
+Compliance from the previous frame is never allowed to feed back into the next
+frame's rotational interpolation.
+
+At the beginning of every pose update, the three torso bones are restored to
+their calibrated SlimeVR lengths.
+
+The frame then runs:
+
+```text
+restore calibrated lengths
+        |
+        v
+solve rotations / articulated spine
+        |
+        v
+apply rotation constraints
+        |
+        v
+estimate all torso strains from this frame
+        |
+        v
+apply all three lengths simultaneously
+        |
+        v
+refresh forward kinematics once
+        |
+        v
+emit computed tracker positions
+```
+
+This prevents recursive length drift and prevents a previous compliance result
+from changing the input geometry used to determine the next rotational solve.
+
+When tracking is paused, the compliance processor is reset and calibrated
+lengths remain in use.
+
+### Multi-signal strain evidence
+
+Each torso span combines two different classes of evidence.
+
+#### Relative rotation
+
+Neighboring segment orientation is used as a stable low-frequency compression
+prior.
+
+For a span with rotations `Q_upper` and `Q_lower`:
+
+```text
+Q_relative = inverse(Q_upper) * Q_lower
+```
+
+The relative angle is converted into a bounded compression tendency.
+
+More local bending therefore permits some effective shortening, while a nearly
+straight span remains near calibrated length.
+
+#### Relative acceleration
+
+When both neighboring physical IMUs exist, the solver compares their world-Y
+acceleration directly:
+
+```text
+a_relative = a_upper.y - a_lower.y
+```
+
+This is important because common motion largely cancels.
+
+For example:
+
+```text
+chest +1.2
+waist +1.2
+-------------
+relative ~0
+```
+
+is mostly whole-body translation.
+
+But:
+
+```text
+chest +1.2
+waist +0.5
+-------------
+relative +0.7
+```
+
+contains evidence of differential motion across that torso span.
+
+A slow baseline removes residual sensor mismatch and mounting bias.
+
+### Relative jerk
+
+The rate of change of the filtered relative acceleration is also calculated.
+
+```text
+jerk_relative = d(a_relative) / dt
+```
+
+The compliance estimator uses a conservative mix:
+
+```text
+35% filtered relative acceleration
+65% normalized relative jerk
+```
+
+This makes movement transitions informative without allowing a sustained
+acceleration plateau to continuously drive segment length.
+
+Unlike Spring Bones, Bone Compliance is deliberately non-oscillating. The
+resulting target strain is followed with a damped smoothing response rather
+than a mass-spring oscillator.
+
+### Simultaneous solve
+
+The three torso spans are not solved recursively.
+
+Incorrect:
+
+```text
+compress upper span
+        |
+        v
+move next joint
+        |
+        v
+use moved joint as input for next span
+```
+
+Current design:
+
+```text
+same physical frame
+   |       |       |
+   v       v       v
+span 1   span 2   span 3
+   |       |       |
+   +-------+-------+
+           |
+           v
+simultaneous strain projection
+           |
+           v
+apply all three lengths
+```
+
+Every segment owns independent filter/derivative state. One segment's solved
+strain is never used as another segment's sensor input.
+
+### Preserve total torso length
+
+The Bone Compliance tab includes:
+
+- **Preserve total torso length**
+
+When enabled, the solver projects the local strain solution so:
+
+```text
+sum(restLength_i * strain_i) ~= 0
+```
+
+This allows local redistribution such as:
+
+```text
+Upper Chest -> Chest   -2 mm
+Chest -> Waist         -5 mm
+Waist -> Hip           +7 mm
+--------------------------------
+total                   0 mm
+```
+
+while preserving the user's calibrated overall torso length.
+
+When this option is disabled, the torso may undergo a small net
+compression/extension, still bounded by every segment's hard limits.
+
+The projection respects asymmetric compression and extension limits and is
+performed simultaneously across all active compliant spans.
+
+### Bone Compliance controls
+
+The global page exposes:
+
+- **Enable compliant torso solve**
+- **Overall compliance**
+- **Preserve total torso length**
+- **Compliance response**
+
+Overall compliance is a blend into the bounded solution:
+
+```text
+0%   = normal rigid SlimeVR segment lengths
+100% = use the full allowed compliant estimate
+```
+
+It is not a percentage by which a bone is allowed to shrink.
+
+Each torso span separately exposes:
+
+- enabled / disabled
+- segment compliance
+- maximum compression
+- maximum extension
+- differential sensor influence
+
+The global compliance and local segment compliance multiply.
+
+For example, with:
+
+```text
+overall compliance = 50%
+segment compliance = 60%
+compression limit  = 4%
+```
+
+the maximum effective compression contributed by that configuration is bounded
+to approximately:
+
+```text
+4% * 0.50 * 0.60 = 1.2%
+```
+
+before simultaneous total-length projection.
+
+### Initial defaults
+
+The initial profiles are intentionally conservative:
+
+```text
+Upper Chest -> Chest
+  compliance        45%
+  compression       2.5%
+  extension         1.5%
+  sensor influence  35%
+
+Chest -> Waist
+  compliance        65%
+  compression       4.0%
+  extension         2.5%
+  sensor influence  55%
+
+Waist -> Hip
+  compliance        55%
+  compression       3.5%
+  extension         2.0%
+  sensor influence  50%
+```
+
+Global defaults:
+
+```text
+enabled                false
+overall compliance     50%
+preserve torso length  true
+response               50%
+```
+
+The feature therefore remains opt-in.
+
+### Relationship to the other Custom IK layers
+
+The three Custom IK systems now have separate responsibilities:
+
+```text
+Articulated Spine
+    = distribute missing ROTATION across torso segments
+
+Bone Compliance
+    = distribute small PHYSICAL POSITION / LENGTH residuals
+
+Spring Bones
+    = add VIRTUAL SECONDARY MOTION after the physical solve
+```
+
+This separation is intentional.
+
+Bone Compliance affects the anatomical position estimate and can therefore
+influence the computed chest/hip and downstream limb root positions.
+
+Spring Bones remain export-only and cannot feed back into Bone Compliance or the
+physical skeleton.
+
 ## Current custom version: articulated retargeting + Spring Bones
 
 This version expands the original position-retargeting experiment into a broader
