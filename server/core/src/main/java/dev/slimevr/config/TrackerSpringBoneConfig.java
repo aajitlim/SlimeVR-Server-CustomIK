@@ -25,6 +25,34 @@ public class TrackerSpringBoneConfig {
 	 */
 	public float pull = 0.65f;
 
+	/**
+	 * When true and IMU acceleration is available, derive jerk and snap from the
+	 * filtered acceleration signal and use a weighted normalized combination as
+	 * the transient spring driver.
+	 */
+	public boolean derivativeDriverEnabled = false;
+
+	/**
+	 * Relative contribution of filtered dynamic acceleration.
+	 */
+	public float accelerationWeight = 0.20f;
+
+	/**
+	 * Relative contribution of the first acceleration derivative (jerk).
+	 */
+	public float jerkWeight = 0.70f;
+
+	/**
+	 * Relative contribution of the second acceleration derivative (snap).
+	 */
+	public float snapWeight = 0.10f;
+
+	/**
+	 * 0 = smoother / slower derivative response, 1 = faster / more reactive.
+	 * This changes filter bandwidth and derivative normalization time scale.
+	 */
+	public float derivativeResponse = 0.55f;
+
 	public TrackerSpringBoneConfig() {
 	}
 
