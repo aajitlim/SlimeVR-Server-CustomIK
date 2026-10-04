@@ -27,9 +27,11 @@ const PREVIEW_DAMPING_RATIO = 0.38;
 export function SpringBoneCloseupWidget({
   role,
   spring,
+  useAcceleration,
 }: {
   role: TrackerRetargetRole;
   spring: TrackerSpringBoneAdjustment;
+  useAcceleration: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -268,6 +270,9 @@ export function SpringBoneCloseupWidget({
           </Typography>
           <Typography color="secondary">
             Disc radius {(DISC_RADIUS_METERS * 100).toFixed(1)} cm
+          </Typography>
+          <Typography color="secondary">
+            Driver: {useAcceleration ? 'IMU preferred + fallback' : 'Position derived'}
           </Typography>
         </div>
 
