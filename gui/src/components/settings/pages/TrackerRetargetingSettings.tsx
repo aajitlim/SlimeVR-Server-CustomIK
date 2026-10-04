@@ -10,6 +10,7 @@ import {
 } from '@/components/settings/SettingsPageLayout';
 import { SkeletonVisualizerWidget } from '@/components/widgets/SkeletonVisualizerWidget';
 import { SpringBonesSettings } from '@/components/settings/pages/SpringBonesSettings';
+import { BoneComplianceSettings } from '@/components/settings/pages/BoneComplianceSettings';
 import {
   makeDefaultTrackerRetargetConfig,
   RETARGET_ROLES,
@@ -126,7 +127,7 @@ export function TrackerRetargetingSettings() {
   const [selectedRole, setSelectedRole] =
     useState<TrackerRetargetRole>('waist');
   const [activeSubtab, setActiveSubtab] = useState<
-    'retargeting' | 'spring_bones'
+    'retargeting' | 'spring_bones' | 'bone_compliance'
   >('retargeting');
   const [showSpineNodes, setShowSpineNodes] = useState(true);
   const [showSourceTargets, setShowSourceTargets] = useState(true);
@@ -195,9 +196,9 @@ export function TrackerRetargetingSettings() {
         <div className="flex flex-col gap-2">
           <Typography variant="main-title">Custom IK</Typography>
           <Typography color="secondary">
-            Tune articulated spine behavior, independent game-space tracker
-            placement, and bounded secondary spring motion without changing the
-            physical tracker rotations.
+            Tune articulated spine behavior, bounded physical torso compliance,
+            independent game-space tracker placement, and secondary spring
+            motion without changing the physical tracker rotations.
           </Typography>
           <div className="flex flex-wrap items-center gap-3">
             <SyncStatus loaded={loaded} syncState={syncState} />
@@ -206,7 +207,7 @@ export function TrackerRetargetingSettings() {
             </Button>
           </div>
 
-          <div className="grid sm:grid-cols-2 gap-2 mt-2">
+          <div className="grid sm:grid-cols-3 gap-2 mt-2">
             <Button
               variant={activeSubtab === 'retargeting' ? 'tertiary' : 'secondary'}
               onClick={() => setActiveSubtab('retargeting')}
@@ -218,6 +219,14 @@ export function TrackerRetargetingSettings() {
               onClick={() => setActiveSubtab('spring_bones')}
             >
               Spring Bones
+            </Button>
+            <Button
+              variant={
+                activeSubtab === 'bone_compliance' ? 'tertiary' : 'secondary'
+              }
+              onClick={() => setActiveSubtab('bone_compliance')}
+            >
+              Bone Compliance
             </Button>
           </div>
         </div>
@@ -646,6 +655,13 @@ export function TrackerRetargetingSettings() {
             config={config}
             selectedRole={selectedRole}
             setSelectedRole={setSelectedRole}
+            updateConfig={updateConfig}
+          />
+        )}
+
+        {activeSubtab === 'bone_compliance' && (
+          <BoneComplianceSettings
+            config={config}
             updateConfig={updateConfig}
           />
         )}
