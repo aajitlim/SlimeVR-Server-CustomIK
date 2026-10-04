@@ -16,6 +16,372 @@ This is specifically intended for avatar alignment cases where moving a SteamVR
 tracker point to the avatar's expected hip/knee/foot point should not bend or
 rotate SlimeVR's solved body to satisfy that game-space point.
 
+
+## Current custom version: articulated retargeting + Spring Bones
+
+This version expands the original position-retargeting experiment into a broader
+**Custom IK** workspace for tuning how SlimeVR's solved body is exported and
+visually inspected.
+
+The main additions in this version are:
+
+- decoupled physical and virtual tracker positions,
+- independent articulated torso interpolation,
+- pelvis/floor-lift decoupling,
+- a visual tracker placement editor,
+- a new **Spring Bones** secondary-motion system,
+- a dedicated spring-motion close-up renderer,
+- safer WebGL renderer lifecycle handling when switching between Custom IK
+  subtabs,
+- persistent configuration over the existing SlimeVR websocket without changing
+  the SolarXR binary protocol.
+
+The Custom IK UI is split into two subtabs:
+
+1. **Retargeting / Spine**
+2. **Spring Bones**
+
+These tabs intentionally solve different problems and now own separate rendering
+lifecycles.
+
+### Retargeting / Spine tab
+
+This is the full-body adjustment workspace.
+
+It contains:
+
+- SteamVR output mode selection:
+  - **Physical source positions**
+  - **Virtualized positions**
+- articulated spine controls,
+- lower-body floor-lift controls,
+- per-tracker virtual position adjustment,
+- body-yaw or world-space position offsets,
+- per-axis X/Y/Z controls,
+- paired-limb copy and X-mirror helpers,
+- full-body skeleton visualization,
+- source tracker discs,
+- virtual tracker discs,
+- positional delta lines,
+- upper-chest/chest/waist/hip spine-joint markers.
+
+The full-body/disc viewer lives **only on this tab**. It is the reference view
+for understanding where the selected tracker point sits on the actual solved
+body.
+
+### Spring Bones tab
+
+This version adds a dedicated **Spring Bones** system for bounded secondary
+motion.
+
+A Spring Bone does not alter the anatomical skeleton. It also does not alter
+tracker rotation.
+
+Instead, it adds a small dynamic offset only to the exported tracker's **world Y
+position** after the normal solve and after optional position retargeting.
+
+The runtime order is:
+
+```text
+SlimeVR anatomical solve
+        |
+        v
+computed tracker position
+        |
+        v
+optional retarget position
+        |
+        v
+Spring Bone Y offset
+        |
+        v
+SteamVR position
+```
+
+Tracker rotation follows an independent path:
+
+```text
+SlimeVR computed quaternion
+        |
+        v
+SteamVR quaternion
+```
+
+This means Spring Bones cannot change tracker pitch, yaw, or roll.
+
+They also cannot directly change X or Z.
+
+### Spring Bone controls
+
+Each supported exported tracker role can have its own spring configuration.
+
+The current supported roles are:
+
+- Hip / Waist
+- Chest
+- Left knee
+- Right knee
+- Left foot
+- Right foot
+- Left elbow
+- Right elbow
+- Left hand
+- Right hand
+
+Each role has:
+
+- **Enable spring on this tracker**
+- **Spring distance**
+- **Strength**
+- **Pull**
+
+There is also a global:
+
+- **Enable spring bones on SteamVR output**
+
+toggle.
+
+All spring behavior defaults to disabled.
+
+#### Spring distance
+
+Spring distance is the hard maximum vertical displacement above or below the
+solved tracker point.
+
+For example, a distance of `0.03 m` gives the point a maximum freedom of:
+
+```text
++3 cm
+  |
+  |
+rest position
+  |
+  |
+-3 cm
+```
+
+The runtime spring cannot move outside this interval.
+
+#### Strength
+
+Strength controls the return stiffness of the oscillator.
+
+Higher values:
+
+- return toward the solved point faster,
+- produce a tighter, faster oscillation,
+- make the tracker feel more firmly attached.
+
+Lower values:
+
+- return more slowly,
+- create a softer secondary motion,
+- allow a longer visible bounce.
+
+#### Pull
+
+Pull controls how strongly changes in the solved point's vertical velocity inject
+motion into the spring.
+
+Higher values cause starts, stops, crouches, rises, bends, impacts, and other
+vertical acceleration changes to produce a stronger spring reaction.
+
+At `0`, body motion cannot kick the spring.
+
+### Spring motion model
+
+The Spring Bone system is impulse-driven rather than being a simple positional
+smoothing filter.
+
+The solved tracker position itself is never delayed or smoothed.
+
+Instead, the processor observes changes in vertical velocity and converts part
+of that change into spring velocity.
+
+This is important because it means:
+
+- slow steady motion remains close to the true SlimeVR position,
+- sudden starts/stops create visible secondary motion,
+- the spring can oscillate without making all movement feel delayed,
+- the original anatomical tracking remains authoritative.
+
+The oscillator uses bounded semi-implicit integration and a damping term.
+
+A long frame gap or stalled bridge resets the spring state instead of allowing
+stale velocity to accumulate. This prevents a paused or reconnecting bridge from
+creating an extreme launch impulse when updates resume.
+
+### Spring presets
+
+The UI includes three convenience presets:
+
+- **Subtle**
+  - 1.5 cm distance
+  - strength 18
+  - pull 0.35
+- **Soft**
+  - 3.0 cm distance
+  - strength 12
+  - pull 0.65
+- **Loose**
+  - 6.0 cm distance
+  - strength 7
+  - pull 1.10
+
+These are starting points only. Every value remains independently adjustable.
+
+### Dedicated Spring Bones visualizer
+
+The Spring Bones tab now uses a dedicated close-up renderer instead of reusing
+the full-body skeleton viewer.
+
+The close-up is an orthographic local-space view centered on the currently
+selected spring point.
+
+It displays:
+
+- the tracker-disc radius,
+- the solved/rest disc as a cyan wireframe disc,
+- the moving spring disc in magenta,
+- the vertical Y travel rail,
+- the rest/center line,
+- upper and lower hard-limit rings,
+- the configured +/- travel distance,
+- the current strength and pull values.
+
+The close-up periodically injects a deterministic preview impulse using the
+current spring settings.
+
+This animation is a **parameter preview**, not live tracker telemetry.
+
+Its purpose is to make the mechanical meaning of distance, strength, and pull
+visually understandable without requiring the user to physically move every time
+a slider is adjusted.
+
+### Visualizer ownership and tab behavior
+
+The Custom IK visualizers are intentionally separated:
+
+```text
+Retargeting / Spine
+    |
+    +-- full body skeleton
+    +-- source discs
+    +-- virtual discs
+    +-- delta lines
+    +-- spine joints
+
+Spring Bones
+    |
+    +-- spring close-up only
+```
+
+The full-body viewer is not duplicated on the Spring Bones tab.
+
+This avoids making one WebGL scene serve two unrelated tuning tasks.
+
+### Renderer lifecycle fix
+
+This version also changes how the Custom IK visualizers are mounted.
+
+Previously the Retargeting / Spine viewer remained mounted and was only hidden
+with CSS when switching to Spring Bones.
+
+That could leave Three.js rendering into a hidden or zero-sized canvas and could
+cause stale, blank, or incorrectly sized views when returning to the first tab.
+
+The tabs now use true conditional mounting.
+
+Switching away from a tab destroys its renderer and switching back creates a
+fresh renderer.
+
+The skeleton visualizer cleanup now explicitly:
+
+- disconnects its ResizeObserver,
+- removes mouse enter/leave listeners,
+- destroys the exact Three.js context created by that mount,
+- disposes geometries and materials,
+- releases the WebGL renderer,
+- clears the active context reference.
+
+The Spring Bone close-up uses the opposite rule for slider changes: it keeps one
+WebGL renderer alive while distance, strength, and pull are being adjusted.
+
+Slider updates therefore change only spring parameters and geometry rather than
+destroying and recreating the entire renderer on every input event.
+
+Changing to a different spring role intentionally remounts the close-up because
+that represents a different spring point.
+
+### Configuration and persistence
+
+The new Spring Bone settings are stored alongside the existing SteamVR bridge
+configuration.
+
+Per-role configuration stores:
+
+```text
+enabled
+distance
+strength
+pull
+```
+
+The global bridge configuration also stores:
+
+```text
+springBonesEnabled
+```
+
+The existing Custom IK JSON control path over the SlimeVR websocket carries
+these values between the GUI and server.
+
+The normal SolarXR FlatBuffer protocol remains unchanged.
+
+This keeps the fork easier to rebase and avoids requiring a protocol schema
+change for settings that are specific to this custom server.
+
+### Separation guarantees in this version
+
+The intended separation is now:
+
+```text
+ANATOMICAL SOLVE
+    |
+    +-- skeleton rotations
+    +-- computed tracker rotations
+    +-- computed tracker positions
+                |
+                v
+        optional position retarget
+                |
+                v
+        optional Spring Bone Y motion
+                |
+                v
+          SteamVR XYZ output
+```
+
+while rotation remains:
+
+```text
+computed tracker quaternion
+        |
+        v
+SteamVR quaternion
+```
+
+Therefore:
+
+- virtual position offsets do not deform the physical skeleton,
+- Spring Bones do not deform the physical skeleton,
+- Spring Bones do not affect tracker rotation,
+- tracker retargeting does not affect tracker rotation,
+- calibration data remains separate from avatar-specific output placement,
+- Spring Bones can be enabled or disabled without altering the underlying body
+  solve.
+
+
 ## Configuration
 
 The feature is off by default. In the SteamVR bridge section of the config, use:
@@ -238,19 +604,30 @@ anchor representing its configured +/- travel limit. Individual roles default
 to disabled, and the global Spring Bones output toggle also defaults to off.
 
 
-### Spring Bones dual viewers
+### Spring Bones visualizer layout
 
-The Spring Bones subtab intentionally uses two separate renderers:
+The full-body disc/skeleton visualizer now belongs exclusively to the
+**Retargeting / Spine** tab.
 
-1. **Disc / body view** — the normal articulated skeleton with solved source
-   discs and virtual target discs. This answers where the selected spring point
-   is attached to the body.
-2. **Spring motion close-up** — a dedicated local-space orthographic renderer
-   centered on the selected tracker disc. It renders the same 5.8 cm preview
-   disc radius used by the tracker overlay, the Y-axis travel rail, the rest
-   position, upper/lower hard-limit rings, and a moving preview disc.
+The **Spring Bones** tab contains only the dedicated spring close-up renderer.
+
+This separation is intentional:
+
+- Retargeting / Spine answers **where is this tracker point on the body?**
+- Spring Bones answers **how can this selected point move along its spring
+  freedom?**
+
+The Spring Bone close-up is a local-space orthographic renderer centered on the
+selected tracker disc. It renders the same 5.8 cm preview disc radius used by
+the tracker overlay, the Y-axis travel rail, the rest position, upper/lower
+hard-limit rings, and a moving preview disc.
 
 The close-up injects a deterministic periodic vertical-motion impulse using the
 current spring distance/strength/pull values so the spring response can be seen
 without requiring the user to physically move. It is explicitly a parameter
 preview, not live spring telemetry.
+
+The two tabs also have independent WebGL lifecycles. The Retargeting / Spine
+renderer is fully unmounted when Spring Bones is selected, and rebuilt when the
+user returns. The spring close-up remains stable while its sliders are adjusted
+and only remounts when the selected tracker role changes.
