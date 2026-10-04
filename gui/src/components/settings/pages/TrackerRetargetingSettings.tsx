@@ -193,13 +193,11 @@ export function TrackerRetargetingSettings() {
         className="gap-4"
       >
         <div className="flex flex-col gap-2">
-          <Typography variant="main-title">
-            Tracker retargeting and spine tuning
-          </Typography>
+          <Typography variant="main-title">Custom IK</Typography>
           <Typography color="secondary">
-            Keep SlimeVR's anatomical solve and tracker rotations authoritative,
-            while independently positioning the virtual tracker targets that are
-            exported to SteamVR.
+            Tune articulated spine behavior, independent game-space tracker
+            placement, and bounded secondary spring motion without changing the
+            physical tracker rotations.
           </Typography>
           <div className="flex flex-wrap items-center gap-3">
             <SyncStatus loaded={loaded} syncState={syncState} />
