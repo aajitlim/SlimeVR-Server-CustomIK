@@ -23,6 +23,20 @@ import {
 const DISC_RADIUS_METERS = 0.058;
 const DISC_HEIGHT_METERS = 0.012;
 const PREVIEW_DAMPING_RATIO = 0.38;
+const GRAVITY_MPS2 = 9.80665;
+
+function clamp(value: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function lerp(from: number, to: number, t: number) {
+  return from + (to - from) * t;
+}
+
+function softClampDrive(value: number) {
+  const limit = 3;
+  return limit * Math.tanh(value / limit);
+}
 
 export function SpringBoneCloseupWidget({
   role,
@@ -36,7 +50,19 @@ export function SpringBoneCloseupWidget({
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const springRef = useRef(spring);
+  const useAccelerationRef = useRef(useAcceleration);
+
+  const accelerationBarRef = useRef<HTMLDivElement>(null);
+  const jerkBarRef = useRef<HTMLDivElement>(null);
+  const snapBarRef = useRef<HTMLDivElement>(null);
+  const driveBarRef = useRef<HTMLDivElement>(null);
+  const accelerationTextRef = useRef<HTMLSpanElement>(null);
+  const jerkTextRef = useRef<HTMLSpanElement>(null);
+  const snapTextRef = useRef<HTMLSpanElement>(null);
+  const driveTextRef = useRef<HTMLSpanElement>(null);
+
   springRef.current = spring;
+  useAccelerationRef.current = useAcceleration;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -139,8 +165,15 @@ export function SpringBoneCloseupWidget({
     let springOffset = 0;
     let springVelocity = 0;
     let lastTime = performance.now();
-    let lastKick = lastTime;
+    let pulseStart = lastTime;
     let lastGeometryDistance = -1;
+
+    let filteredAccelerationG = 0;
+    let previousAccelerationG = 0;
+    let filteredJerkGPerSecond = 0;
+    let previousJerkGPerSecond = 0;
+    let filteredSnapGPerSecondSquared = 0;
+    let hasDerivativeHistory = false;
 
     const updateGeometry = () => {
       const distance = Math.max(0, springRef.current.distance);
@@ -163,6 +196,20 @@ export function SpringBoneCloseupWidget({
       camera.top = halfView;
       camera.bottom = -halfView;
       camera.updateProjectionMatrix();
+    };
+
+    const setMeter = (
+      bar: HTMLDivElement | null,
+      text: HTMLSpanElement | null,
+      value: number
+    ) => {
+      if (bar) {
+        bar.style.width = `${Math.min(100, Math.abs(value) * 100)}%`;
+        bar.style.opacity = value === 0 ? '0.2' : '1';
+      }
+      if (text) {
+        text.textContent = `${value >= 0 ? '+' : ''}${value.toFixed(2)}`;
+      }
     };
 
     updateGeometry();
@@ -189,35 +236,139 @@ export function SpringBoneCloseupWidget({
       const distance = Math.max(0, currentSpring.distance);
       const strength = Math.max(1, currentSpring.strength);
       const pull = Math.max(0, currentSpring.pull);
+      const accelerationMode = useAccelerationRef.current;
 
       if (distance !== lastGeometryDistance) {
         updateGeometry();
         lastGeometryDistance = distance;
       }
 
-      // Re-kick the local preview periodically. This is not tracker telemetry;
-      // it is a deterministic visualization of how the configured oscillator
-      // reacts to a vertical-motion impulse.
-      if (now - lastKick > 2300) {
-        springVelocity += Math.min(
-          1.25,
-          0.22 + pull * 0.48
-        );
-        lastKick = now;
+      let pulseAge = (now - pulseStart) / 1000;
+      let pulseRestarted = false;
+      if (pulseAge > 2.3) {
+        pulseStart = now;
+        pulseAge = 0;
+        pulseRestarted = true;
       }
+
+      let previewAccelerationG = 0;
+      if (pulseAge < 0.16) {
+        previewAccelerationG =
+          Math.sin((Math.PI * pulseAge) / 0.16) * 0.22;
+      } else if (pulseAge < 0.3) {
+        previewAccelerationG =
+          -Math.sin((Math.PI * (pulseAge - 0.16)) / 0.14) * 0.1;
+      }
+
+      const response = clamp(currentSpring.derivativeResponse, 0, 1);
+      const accelerationFilterHz = lerp(14, 36, response);
+      const accelerationFollow = clamp(dt * accelerationFilterHz, 0, 1);
+      filteredAccelerationG +=
+        (previewAccelerationG - filteredAccelerationG) * accelerationFollow;
+
+      let normalizedJerkG = 0;
+      let normalizedSnapG = 0;
+      let previewDriveG = 0;
+
+      if (
+        accelerationMode &&
+        currentSpring.derivativeDriverEnabled
+      ) {
+        if (!hasDerivativeHistory) {
+          previousAccelerationG = filteredAccelerationG;
+          filteredJerkGPerSecond = 0;
+          previousJerkGPerSecond = 0;
+          filteredSnapGPerSecondSquared = 0;
+          hasDerivativeHistory = true;
+        } else {
+          const rawJerk = clamp(
+            (filteredAccelerationG - previousAccelerationG) / dt,
+            -80,
+            80
+          );
+          const jerkFilterHz = lerp(8, 28, response);
+          filteredJerkGPerSecond +=
+            (rawJerk - filteredJerkGPerSecond) *
+            clamp(dt * jerkFilterHz, 0, 1);
+
+          const rawSnap = clamp(
+            (filteredJerkGPerSecond - previousJerkGPerSecond) / dt,
+            -800,
+            800
+          );
+          const snapFilterHz = lerp(6, 22, response);
+          filteredSnapGPerSecondSquared +=
+            (rawSnap - filteredSnapGPerSecondSquared) *
+            clamp(dt * snapFilterHz, 0, 1);
+        }
+
+        const tau = lerp(0.18, 0.06, response);
+        normalizedJerkG = filteredJerkGPerSecond * tau;
+        normalizedSnapG =
+          filteredSnapGPerSecondSquared * tau * tau;
+
+        const accelerationWeight = clamp(
+          currentSpring.accelerationWeight,
+          0,
+          2
+        );
+        const jerkWeight = clamp(currentSpring.jerkWeight, 0, 2);
+        const snapWeight = clamp(currentSpring.snapWeight, 0, 2);
+        const totalWeight =
+          accelerationWeight + jerkWeight + snapWeight;
+
+        const weightedDrive =
+          totalWeight > 0
+            ? (filteredAccelerationG * accelerationWeight +
+                normalizedJerkG * jerkWeight +
+                normalizedSnapG * snapWeight) /
+              totalWeight
+            : 0;
+
+        previewDriveG = softClampDrive(weightedDrive);
+        previousAccelerationG = filteredAccelerationG;
+        previousJerkGPerSecond = filteredJerkGPerSecond;
+      } else if (accelerationMode) {
+        hasDerivativeHistory = false;
+        filteredJerkGPerSecond = 0;
+        previousJerkGPerSecond = 0;
+        filteredSnapGPerSecondSquared = 0;
+        previewDriveG = filteredAccelerationG;
+      } else {
+        hasDerivativeHistory = false;
+        filteredAccelerationG = 0;
+        filteredJerkGPerSecond = 0;
+        previousJerkGPerSecond = 0;
+        filteredSnapGPerSecondSquared = 0;
+      }
+
+      setMeter(
+        accelerationBarRef.current,
+        accelerationTextRef.current,
+        filteredAccelerationG
+      );
+      setMeter(jerkBarRef.current, jerkTextRef.current, normalizedJerkG);
+      setMeter(snapBarRef.current, snapTextRef.current, normalizedSnapG);
+      setMeter(driveBarRef.current, driveTextRef.current, previewDriveG);
 
       if (!currentSpring.enabled || distance <= 0 || pull <= 0) {
         springOffset += (0 - springOffset) * Math.min(1, dt * 12);
         springVelocity *= Math.max(0, 1 - dt * 12);
       } else {
-        const acceleration =
+        if (accelerationMode) {
+          springVelocity -= previewDriveG * GRAVITY_MPS2 * dt * pull;
+        } else if (pulseRestarted) {
+          springVelocity += Math.min(1.25, 0.22 + pull * 0.48);
+        }
+
+        const springAcceleration =
           -(strength * strength) * springOffset -
           2 *
             PREVIEW_DAMPING_RATIO *
             strength *
             springVelocity;
 
-        springVelocity += acceleration * dt;
+        springVelocity += springAcceleration * dt;
         springOffset += springVelocity * dt;
 
         if (Math.abs(springOffset) > distance) {
@@ -257,6 +408,12 @@ export function SpringBoneCloseupWidget({
     };
   }, []);
 
+  const driverLabel = !useAcceleration
+    ? 'Position derived'
+    : spring.derivativeDriverEnabled
+      ? 'IMU derivative A / J / S + fallback'
+      : 'IMU acceleration + fallback';
+
   return (
     <div className="flex flex-col gap-2">
       <div className="relative rounded-lg overflow-hidden bg-background-60 h-[360px]">
@@ -272,7 +429,7 @@ export function SpringBoneCloseupWidget({
             Disc radius {(DISC_RADIUS_METERS * 100).toFixed(1)} cm
           </Typography>
           <Typography color="secondary">
-            Driver: {useAcceleration ? 'IMU preferred + fallback' : 'Position derived'}
+            Driver: {driverLabel}
           </Typography>
         </div>
 
@@ -290,11 +447,44 @@ export function SpringBoneCloseupWidget({
             Cyan wireframe = solved/rest disc · Magenta = moving spring disc
           </Typography>
           <Typography color="secondary">
-            The rings are the hard travel limits. This close-up repeatedly
-            injects a preview impulse so you can see the configured spring
-            response; it is not live tracker telemetry.
+            The rings are the hard travel limits. This close-up generates a
+            deterministic motion pulse and runs it through the configured
+            driver; it is not live tracker telemetry.
           </Typography>
         </div>
+      </div>
+
+      <div className="bg-background-60 rounded-lg p-3 flex flex-col gap-2">
+        <Typography variant="section-title">Derivative preview</Typography>
+        <Typography color="secondary">
+          Normalized preview values from the synthetic motion pulse. These show
+          which term is contributing before the weighted drive reaches the
+          spring.
+        </Typography>
+
+        {[
+          ['Acceleration', accelerationBarRef, accelerationTextRef, '#44e4ff'],
+          ['Jerk', jerkBarRef, jerkTextRef, '#ff67d8'],
+          ['Snap', snapBarRef, snapTextRef, '#ffd54a'],
+          ['Combined drive', driveBarRef, driveTextRef, '#ffffff'],
+        ].map(([label, barRef, textRef, color]) => (
+          <div key={label as string} className="grid grid-cols-[100px_1fr_58px] items-center gap-2">
+            <Typography>{label as string}</Typography>
+            <div className="h-2 rounded overflow-hidden bg-background-80">
+              <div
+                ref={(barRef as React.RefObject<HTMLDivElement>).current ? undefined : barRef as React.RefObject<HTMLDivElement>}
+                className="h-full rounded"
+                style={{ width: '0%', backgroundColor: color as string }}
+              />
+            </div>
+            <span
+              ref={(textRef as React.RefObject<HTMLSpanElement>).current ? undefined : textRef as React.RefObject<HTMLSpanElement>}
+              className="text-right text-sm"
+            >
+              +0.00
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );
