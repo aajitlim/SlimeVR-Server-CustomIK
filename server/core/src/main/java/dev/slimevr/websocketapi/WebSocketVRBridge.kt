@@ -6,6 +6,7 @@ import dev.slimevr.VRServer
 import dev.slimevr.VRServer.Companion.getNextLocalTrackerId
 import dev.slimevr.VRServer.Companion.instance
 import dev.slimevr.bridge.Bridge
+import dev.slimevr.config.BoneComplianceConfig
 import dev.slimevr.config.TrackerPositionAdjustmentConfig
 import dev.slimevr.config.TrackerSpringBoneConfig
 import dev.slimevr.tracking.trackers.DeviceOrigin
@@ -260,6 +261,51 @@ class WebSocketVRBridge(
 			bridgeConfig.setTrackerSpringBone(role, current)
 		}
 
+		if (json.has("boneComplianceEnabled")) {
+			server.configManager.vrConfig.boneCompliance.enabled =
+				json["boneComplianceEnabled"].asBoolean()
+		}
+		if (json.has("boneComplianceOverall")) {
+			server.configManager.vrConfig.boneCompliance.overallCompliance =
+				json["boneComplianceOverall"].asDouble().toFloat().coerceIn(0f, 1f)
+		}
+		if (json.has("boneCompliancePreserveTorsoLength")) {
+			server.configManager.vrConfig.boneCompliance.preserveTorsoLength =
+				json["boneCompliancePreserveTorsoLength"].asBoolean()
+		}
+		if (json.has("boneComplianceResponse")) {
+			server.configManager.vrConfig.boneCompliance.response =
+				json["boneComplianceResponse"].asDouble().toFloat().coerceIn(0f, 1f)
+		}
+
+		val boneComplianceSegments = json["boneComplianceSegments"] as? ObjectNode
+		boneComplianceSegments?.fields()?.forEach { (segmentKey, value) ->
+			if (!BONE_COMPLIANCE_SEGMENTS.contains(segmentKey)) return@forEach
+			val segmentNode = value as? ObjectNode ?: return@forEach
+			val current =
+				server.configManager.vrConfig.boneCompliance.getSegment(segmentKey)
+
+			if (segmentNode.has("enabled")) {
+				current.enabled = segmentNode["enabled"].asBoolean()
+			}
+			if (segmentNode.has("compliance")) {
+				current.compliance =
+					segmentNode["compliance"].asDouble().toFloat().coerceIn(0f, 1f)
+			}
+			if (segmentNode.has("compressionLimit")) {
+				current.compressionLimit =
+					segmentNode["compressionLimit"].asDouble().toFloat().coerceIn(0f, 0.12f)
+			}
+			if (segmentNode.has("extensionLimit")) {
+				current.extensionLimit =
+					segmentNode["extensionLimit"].asDouble().toFloat().coerceIn(0f, 0.12f)
+			}
+			if (segmentNode.has("sensorInfluence")) {
+				current.sensorInfluence =
+					segmentNode["sensorInfluence"].asDouble().toFloat().coerceIn(0f, 1f)
+			}
+		}
+
 		if (json.has("hipFloorLiftWeight")) {
 			server.configManager.vrConfig.legTweaks.hipFloorLiftWeight =
 				json["hipFloorLiftWeight"].asDouble().toFloat().coerceIn(0f, 1f)
@@ -287,6 +333,22 @@ class WebSocketVRBridge(
 		response.put(
 			"springBonesUseAcceleration",
 			bridgeConfig.springBonesUseAcceleration,
+		)
+		response.put(
+			"boneComplianceEnabled",
+			server.configManager.vrConfig.boneCompliance.enabled,
+		)
+		response.put(
+			"boneComplianceOverall",
+			server.configManager.vrConfig.boneCompliance.overallCompliance,
+		)
+		response.put(
+			"boneCompliancePreserveTorsoLength",
+			server.configManager.vrConfig.boneCompliance.preserveTorsoLength,
+		)
+		response.put(
+			"boneComplianceResponse",
+			server.configManager.vrConfig.boneCompliance.response,
 		)
 		response.put(
 			"hipFloorLiftWeight",
@@ -332,6 +394,21 @@ class WebSocketVRBridge(
 			springBones.set<ObjectNode>(role.name.lowercase(Locale.ROOT), springNode)
 		}
 		response.set<ObjectNode>("springBones", springBones)
+
+		val boneComplianceSegments = mapper.nodeFactory.objectNode()
+		for (segmentKey in BONE_COMPLIANCE_SEGMENTS) {
+			val segment =
+				server.configManager.vrConfig.boneCompliance.getSegment(segmentKey)
+			val segmentNode = mapper.nodeFactory.objectNode()
+			segmentNode.put("enabled", segment.enabled)
+			segmentNode.put("compliance", segment.compliance)
+			segmentNode.put("compressionLimit", segment.compressionLimit)
+			segmentNode.put("extensionLimit", segment.extensionLimit)
+			segmentNode.put("sensorInfluence", segment.sensorInfluence)
+			boneComplianceSegments.set<ObjectNode>(segmentKey, segmentNode)
+		}
+		response.set<ObjectNode>("boneComplianceSegments", boneComplianceSegments)
+
 		conn.send(response.toString())
 	}
 
@@ -416,6 +493,12 @@ class WebSocketVRBridge(
 
 	companion object {
 		private const val RESET_SOURCE_NAME = "WebSocketVRBridge"
+		private val BONE_COMPLIANCE_SEGMENTS = arrayOf(
+			BoneComplianceConfig.UPPER_CHEST_TO_CHEST,
+			BoneComplianceConfig.CHEST_TO_WAIST,
+			BoneComplianceConfig.WAIST_TO_HIP,
+		)
+
 		private val RETARGET_ROLES = arrayOf(
 			TrackerRole.WAIST,
 			TrackerRole.CHEST,
