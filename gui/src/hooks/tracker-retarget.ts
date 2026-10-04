@@ -31,6 +31,11 @@ export type TrackerSpringBoneAdjustment = {
   distance: number;
   strength: number;
   pull: number;
+  derivativeDriverEnabled: boolean;
+  accelerationWeight: number;
+  jerkWeight: number;
+  snapWeight: number;
+  derivativeResponse: number;
 };
 
 export type TrackerRetargetConfig = {
@@ -83,6 +88,11 @@ const defaultSpringBone = (): TrackerSpringBoneAdjustment => ({
   distance: 0.03,
   strength: 12,
   pull: 0.65,
+  derivativeDriverEnabled: false,
+  accelerationWeight: 0.2,
+  jerkWeight: 0.7,
+  snapWeight: 0.1,
+  derivativeResponse: 0.55,
 });
 
 export const makeDefaultTrackerRetargetConfig = (): TrackerRetargetConfig => ({
@@ -168,6 +178,38 @@ export function normalizeTrackerRetargetConfig(
           pull: Math.min(
             2,
             Math.max(0, finiteNumber(current?.pull, fallback.pull))
+          ),
+          derivativeDriverEnabled:
+            typeof current?.derivativeDriverEnabled === 'boolean'
+              ? current.derivativeDriverEnabled
+              : fallback.derivativeDriverEnabled,
+          accelerationWeight: Math.min(
+            2,
+            Math.max(
+              0,
+              finiteNumber(
+                current?.accelerationWeight,
+                fallback.accelerationWeight
+              )
+            )
+          ),
+          jerkWeight: Math.min(
+            2,
+            Math.max(0, finiteNumber(current?.jerkWeight, fallback.jerkWeight))
+          ),
+          snapWeight: Math.min(
+            2,
+            Math.max(0, finiteNumber(current?.snapWeight, fallback.snapWeight))
+          ),
+          derivativeResponse: Math.min(
+            1,
+            Math.max(
+              0,
+              finiteNumber(
+                current?.derivativeResponse,
+                fallback.derivativeResponse
+              )
+            )
           ),
         },
       ];
