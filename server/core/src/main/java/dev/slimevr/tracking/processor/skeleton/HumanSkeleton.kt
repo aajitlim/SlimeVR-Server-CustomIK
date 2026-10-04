@@ -1043,6 +1043,11 @@ class HumanSkeleton(
 	}
 
 	private fun applyBoneComplianceModel() {
+		if (pauseTracking) {
+			boneComplianceProcessor.reset()
+			return
+		}
+
 		val config =
 			humanPoseManager.server?.configManager?.vrConfig?.boneCompliance
 				?: run {
