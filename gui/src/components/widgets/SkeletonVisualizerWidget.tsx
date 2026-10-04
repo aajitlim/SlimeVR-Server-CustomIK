@@ -8,8 +8,15 @@ import {
 } from '@/utils/skeletonHelper';
 import {
   Bone,
+  BufferGeometry,
+  CylinderGeometry,
+  DoubleSide,
   GridHelper,
   Group,
+  Line,
+  LineBasicMaterial,
+  Mesh,
+  MeshBasicMaterial,
   PerspectiveCamera,
   Quaternion,
   Scene,
@@ -17,17 +24,23 @@ import {
   Vector3,
   WebGLRenderer,
 } from 'three';
-import { BodyPart, BoneT } from 'solarxr-protocol';
+import { BodyPart, BoneT, TrackerDataT } from 'solarxr-protocol';
 import { QuaternionFromQuatT, isIdentity } from '@/maths/quaternion';
 import classNames from 'classnames';
 import { useLocalization } from '@fluent/react';
 import { ErrorBoundary } from 'react-error-boundary';
 import { Typography } from '@/components/commons/Typography';
 import { useAtomValue } from 'jotai';
-import { bonesAtom } from '@/store/app-store';
+import { bonesAtom, computedTrackersAtom } from '@/store/app-store';
 import { useConfig } from '@/hooks/config';
 import { Tween } from '@tweenjs/tween.js';
 import { EyeIcon } from '@/components/commons/icon/EyeIcon';
+import {
+  RETARGET_ROLES,
+  RETARGET_ROLE_BODY_PART,
+  TrackerRetargetConfig,
+  TrackerRetargetRole,
+} from '@/hooks/tracker-retarget';
 
 const GROUND_COLOR = '#2c2c6b';
 
@@ -52,6 +65,11 @@ export type SkeletonPreviewView = {
   hidden: boolean;
   tween: Tween<Vector3>;
   onHeightChange: (view: SkeletonPreviewView, newHeight: number) => void;
+};
+
+type RetargetMarker = {
+  disc: Mesh;
+  line: Line;
 };
 
 function initializePreview(
@@ -83,6 +101,10 @@ function initializePreview(
 
   scene.add(skeletonGroup);
   scene.add(skeleton[0]);
+
+  const retargetGroup = new Group();
+  const retargetMarkers = new Map<TrackerRetargetRole, RetargetMarker>();
+  scene.add(retargetGroup);
 
   let heightOffset = 0;
   let skeletonOffset = 0;
@@ -117,6 +139,114 @@ function initializePreview(
     const yawReset = new Quaternion(vec.x, vec.y, vec.z, quat.w).normalize();
 
     skeletonGroup.rotation.setFromQuaternion(yawReset);
+    retargetGroup.rotation.setFromQuaternion(yawReset);
+  };
+
+  const ensureRetargetMarker = (role: TrackerRetargetRole) => {
+    const existing = retargetMarkers.get(role);
+    if (existing) return existing;
+
+    const disc = new Mesh(
+      new CylinderGeometry(0.055, 0.055, 0.012, 32),
+      new MeshBasicMaterial({
+        transparent: true,
+        opacity: 0.68,
+        side: DoubleSide,
+        depthTest: false,
+      })
+    );
+    disc.renderOrder = 10;
+
+    const line = new Line(
+      new BufferGeometry(),
+      new LineBasicMaterial({
+        transparent: true,
+        opacity: 0.75,
+        depthTest: false,
+      })
+    );
+    line.renderOrder = 9;
+
+    retargetGroup.add(line);
+    retargetGroup.add(disc);
+
+    const marker = { disc, line };
+    retargetMarkers.set(role, marker);
+    return marker;
+  };
+
+  const updateRetargetTargets = (
+    trackers: TrackerDataT[],
+    bones: Map<BodyPart, BoneT>,
+    config?: TrackerRetargetConfig,
+    selectedRole?: TrackerRetargetRole,
+    visible = false
+  ) => {
+    retargetGroup.visible = visible;
+    if (!visible) return;
+
+    const hipRotation = QuaternionFromQuatT(
+      bones.get(BodyPart.HIP)?.rotationG
+    ).normalize();
+    const bodyYaw = new Quaternion(0, hipRotation.y, 0, hipRotation.w);
+    if (bodyYaw.lengthSq() > 0) bodyYaw.normalize();
+    else bodyYaw.identity();
+
+    for (const role of RETARGET_ROLES) {
+      const marker = ensureRetargetMarker(role);
+      const bodyPart = RETARGET_ROLE_BODY_PART[role];
+      const tracker = trackers.find(
+        (candidate) =>
+          candidate.info?.bodyPart === bodyPart && candidate.position
+      );
+      if (!tracker?.position) {
+        marker.disc.visible = false;
+        marker.line.visible = false;
+        continue;
+      }
+
+      const source = new Vector3(
+        tracker.position.x ?? 0,
+        tracker.position.y ?? 0,
+        tracker.position.z ?? 0
+      );
+      const target = source.clone();
+
+      const adjustment = config?.trackers[role];
+      if (config?.enabled && adjustment?.enabled) {
+        const offset = new Vector3(
+          adjustment.x,
+          adjustment.y,
+          adjustment.z
+        );
+        if (adjustment.space === 'body_yaw') {
+          offset.applyQuaternion(bodyYaw);
+        }
+        target.add(offset);
+      }
+
+      marker.disc.visible = true;
+      marker.line.visible = true;
+      marker.disc.position.copy(target);
+
+      const trackerRotation =
+        tracker.rotationIdentityAdjusted ?? tracker.rotation;
+      if (trackerRotation) {
+        marker.disc.quaternion.copy(QuaternionFromQuatT(trackerRotation));
+      } else {
+        marker.disc.quaternion.identity();
+      }
+
+      const selected = role === selectedRole;
+      const material = marker.disc.material as MeshBasicMaterial;
+      material.color.set(selected ? 0xffd54a : 0x44e4ff);
+      material.opacity = selected ? 0.92 : 0.62;
+      marker.disc.scale.setScalar(selected ? 1.35 : 1);
+
+      const lineMaterial = marker.line.material as LineBasicMaterial;
+      lineMaterial.color.set(selected ? 0xffd54a : 0x44e4ff);
+      marker.line.geometry.setFromPoints([source, target]);
+    }
   };
 
   const computeUserHeight = (bones: Map<BodyPart, BoneT>) => {
@@ -224,11 +354,19 @@ function initializePreview(
       if (newSkeletinOffset != skeletonOffset) {
         skeletonOffset = newSkeletinOffset;
         skeletonGroup.position.set(0, skeletonOffset, 0);
+        retargetGroup.position.set(0, skeletonOffset, 0);
       }
     },
+    updateRetargetTargets,
     destroy: () => {
       cancelAnimationFrame(animationFrameId);
       skeletonHelper.dispose();
+      retargetMarkers.forEach(({ disc, line }) => {
+        disc.geometry.dispose();
+        (disc.material as MeshBasicMaterial).dispose();
+        line.geometry.dispose();
+        (line.material as LineBasicMaterial).dispose();
+      });
       if (!renderer) return;
       renderer.dispose();
       renderer = null; // Very important for js to free the WebGL context. dispose does not to it alone
@@ -300,9 +438,15 @@ type PreviewContext = ReturnType<typeof initializePreview>;
 function SkeletonVisualizer({
   onInit,
   disabled = false,
+  retargetConfig,
+  selectedRetargetRole,
+  showRetargetTargets = false,
 }: {
   onInit: (context: PreviewContext) => void;
   disabled?: boolean;
+  retargetConfig?: TrackerRetargetConfig;
+  selectedRetargetRole?: TrackerRetargetRole;
+  showRetargetTargets?: boolean;
 }) {
   const { config } = useConfig();
 
@@ -311,6 +455,7 @@ function SkeletonVisualizer({
   const containerRef = useRef<HTMLDivElement>(null);
   const resizeObserver = useRef(new ResizeObserver(([e]) => onResize(e)));
   const _bones = useAtomValue(bonesAtom);
+  const computedTrackers = useAtomValue(computedTrackersAtom);
 
   const bones = useMemo(() => {
     return new Map(_bones.map((b) => [b.bodyPart, b]));
@@ -328,6 +473,25 @@ function SkeletonVisualizer({
     if (!context || disabled) return;
     context.updatesBones(bones);
   }, [bones, disabled]);
+
+  useEffect(() => {
+    const context = previewContext.current;
+    if (!context || disabled) return;
+    context.updateRetargetTargets(
+      computedTrackers.map(({ tracker }) => tracker),
+      bones,
+      retargetConfig,
+      selectedRetargetRole,
+      showRetargetTargets
+    );
+  }, [
+    computedTrackers,
+    bones,
+    retargetConfig,
+    selectedRetargetRole,
+    showRetargetTargets,
+    disabled,
+  ]);
 
   const onResize = (e: ResizeObserverEntry) => {
     const context = previewContext.current;
@@ -405,10 +569,16 @@ export function SkeletonVisualizerWidget({
   },
   disabled = false,
   toggleDisabled,
+  retargetConfig,
+  selectedRetargetRole,
+  showRetargetTargets = false,
 }: {
   onInit?: (context: PreviewContext) => void;
   disabled?: boolean;
   toggleDisabled?: () => void;
+  retargetConfig?: TrackerRetargetConfig;
+  selectedRetargetRole?: TrackerRetargetRole;
+  showRetargetTargets?: boolean;
 }) {
   const { l10n } = useLocalization();
   const [error, setError] = useState(false);
@@ -421,7 +591,13 @@ export function SkeletonVisualizerWidget({
         })}
       >
         <ErrorBoundary onError={() => setError(true)} fallback={<></>}>
-          <SkeletonVisualizer onInit={onInit} disabled={disabled} />
+          <SkeletonVisualizer
+            onInit={onInit}
+            disabled={disabled}
+            retargetConfig={retargetConfig}
+            selectedRetargetRole={selectedRetargetRole}
+            showRetargetTargets={showRetargetTargets}
+          />
         </ErrorBoundary>
       </div>
       <div
