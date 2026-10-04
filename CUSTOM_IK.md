@@ -62,3 +62,18 @@ and also raises the hip by `avgOffset / 2 * WAIST_PUSH_WEIGHT`. That is a
 physical-output correction path, not this export retarget layer. It will be
 handled independently so ground anchoring can be improved without coupling it
 to avatar tracker placement.
+
+## Hip lift decoupling
+
+Upstream leg floor clipping raises the hip whenever a foot has to be pushed
+above the calibrated floor. That can make a forward bend look like the whole
+body is being lifted.
+
+This branch adds `legTweaks.hipFloorLiftWeight`:
+
+- `0.0` (custom default): floor clipping never lifts the pelvis.
+- `0.2`: reproduces the previous upstream behavior.
+- `1.0`: full average foot displacement is allowed to influence the pelvis.
+
+Feet and knees still receive the existing floor correction. This setting only
+controls the secondary pelvis lift contribution.
