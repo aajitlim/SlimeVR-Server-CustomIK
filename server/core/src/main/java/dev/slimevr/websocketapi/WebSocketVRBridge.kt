@@ -6,9 +6,11 @@ import dev.slimevr.VRServer
 import dev.slimevr.VRServer.Companion.getNextLocalTrackerId
 import dev.slimevr.VRServer.Companion.instance
 import dev.slimevr.bridge.Bridge
+import dev.slimevr.config.TrackerPositionAdjustmentConfig
 import dev.slimevr.tracking.trackers.DeviceOrigin
 import dev.slimevr.tracking.trackers.Tracker
 import dev.slimevr.tracking.trackers.TrackerPosition
+import dev.slimevr.tracking.trackers.TrackerRole
 import dev.slimevr.tracking.trackers.TrackerStatus
 import io.eiren.util.collections.FastList
 import io.eiren.util.logging.LogManager
@@ -133,6 +135,17 @@ class WebSocketVRBridge(
 						return
 					}
 
+					"retarget_get" -> {
+						sendRetargetConfig(conn)
+						return
+					}
+
+					"retarget_set" -> {
+						parseRetargetConfig(json)
+						sendRetargetConfig(conn)
+						return
+					}
+
 					// TODO Ignore it for now, it should only register HMD in our test case with id 0
 					"config" -> {
 						LogManager.info("[WebSocket] Config received: $json")
@@ -157,6 +170,74 @@ class WebSocketVRBridge(
 					e,
 				)
 		}
+	}
+
+	private fun parseRetargetConfig(json: ObjectNode) {
+		val bridgeConfig = server.configManager.vrConfig.getBridge("steamvr")
+		if (json.has("enabled")) {
+			bridgeConfig.positionRetargetingEnabled = json["enabled"].asBoolean()
+		}
+
+		val trackers = json["trackers"] as? ObjectNode
+		trackers?.fields()?.forEach { (roleKey, value) ->
+			val role = try {
+				TrackerRole.valueOf(roleKey.uppercase(Locale.ROOT))
+			} catch (_: IllegalArgumentException) {
+				null
+			} ?: return@forEach
+
+			val adjustmentNode = value as? ObjectNode ?: return@forEach
+			val current = bridgeConfig.getTrackerPositionOffset(role)
+				?: TrackerPositionAdjustmentConfig()
+
+			if (adjustmentNode.has("enabled")) current.enabled = adjustmentNode["enabled"].asBoolean()
+			if (adjustmentNode.has("x")) current.x = adjustmentNode["x"].asDouble().toFloat().coerceIn(-2f, 2f)
+			if (adjustmentNode.has("y")) current.y = adjustmentNode["y"].asDouble().toFloat().coerceIn(-2f, 2f)
+			if (adjustmentNode.has("z")) current.z = adjustmentNode["z"].asDouble().toFloat().coerceIn(-2f, 2f)
+			if (adjustmentNode.has("space")) {
+				current.space = if (adjustmentNode["space"].asText().equals("world", true)) {
+					"world"
+				} else {
+					"body_yaw"
+				}
+			}
+
+			bridgeConfig.setTrackerPositionOffset(role, current)
+		}
+
+		if (json.has("hipFloorLiftWeight")) {
+			server.configManager.vrConfig.legTweaks.hipFloorLiftWeight =
+				json["hipFloorLiftWeight"].asDouble().toFloat().coerceIn(0f, 1f)
+			server.humanPoseManager.updateLegTweaksConfig()
+		}
+
+		server.configManager.saveConfig()
+	}
+
+	private fun sendRetargetConfig(conn: WebSocket) {
+		val bridgeConfig = server.configManager.vrConfig.getBridge("steamvr")
+		val response = mapper.nodeFactory.objectNode()
+		response.put("type", "retarget_config")
+		response.put("enabled", bridgeConfig.positionRetargetingEnabled)
+		response.put(
+			"hipFloorLiftWeight",
+			server.configManager.vrConfig.legTweaks.hipFloorLiftWeight,
+		)
+
+		val trackers = mapper.nodeFactory.objectNode()
+		for (role in RETARGET_ROLES) {
+			val adjustment = bridgeConfig.getTrackerPositionOffset(role)
+				?: TrackerPositionAdjustmentConfig()
+			val tracker = mapper.nodeFactory.objectNode()
+			tracker.put("enabled", adjustment.enabled)
+			tracker.put("x", adjustment.x)
+			tracker.put("y", adjustment.y)
+			tracker.put("z", adjustment.z)
+			tracker.put("space", adjustment.space)
+			trackers.set<ObjectNode>(role.name.lowercase(Locale.ROOT), tracker)
+		}
+		response.set<ObjectNode>("trackers", trackers)
+		conn.send(response.toString())
 	}
 
 	private fun parsePosition(json: ObjectNode, conn: WebSocket) {
@@ -240,5 +321,17 @@ class WebSocketVRBridge(
 
 	companion object {
 		private const val RESET_SOURCE_NAME = "WebSocketVRBridge"
+		private val RETARGET_ROLES = arrayOf(
+			TrackerRole.WAIST,
+			TrackerRole.CHEST,
+			TrackerRole.LEFT_KNEE,
+			TrackerRole.RIGHT_KNEE,
+			TrackerRole.LEFT_FOOT,
+			TrackerRole.RIGHT_FOOT,
+			TrackerRole.LEFT_ELBOW,
+			TrackerRole.RIGHT_ELBOW,
+			TrackerRole.LEFT_HAND,
+			TrackerRole.RIGHT_HAND,
+		)
 	}
 }
