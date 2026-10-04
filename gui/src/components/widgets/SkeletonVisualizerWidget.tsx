@@ -20,6 +20,7 @@ import {
   PerspectiveCamera,
   Quaternion,
   Scene,
+  SphereGeometry,
   Vector2,
   Vector3,
   WebGLRenderer,
@@ -43,6 +44,13 @@ import {
 } from '@/hooks/tracker-retarget';
 
 const GROUND_COLOR = '#2c2c6b';
+
+const SPINE_NODE_PARTS = [
+  BodyPart.UPPER_CHEST,
+  BodyPart.CHEST,
+  BodyPart.WAIST,
+  BodyPart.HIP,
+] as const;
 
 // Just need to know the length of the total body, so don't need right legs
 const Y_PARTS = [
@@ -107,6 +115,10 @@ function initializePreview(
   const retargetMarkers = new Map<TrackerRetargetRole, RetargetMarker>();
   scene.add(retargetGroup);
 
+  const spineNodeGroup = new Group();
+  const spineNodes = new Map<BodyPart, Mesh>();
+  scene.add(spineNodeGroup);
+
   let heightOffset = 0;
   let skeletonOffset = 0;
 
@@ -141,6 +153,46 @@ function initializePreview(
 
     skeletonGroup.rotation.setFromQuaternion(yawReset);
     retargetGroup.rotation.setFromQuaternion(yawReset);
+    spineNodeGroup.rotation.setFromQuaternion(yawReset);
+  };
+
+  const updateSpineNodes = (
+    bones: Map<BodyPart, BoneT>,
+    visible = false
+  ) => {
+    spineNodeGroup.visible = visible;
+    if (!visible) return;
+
+    for (const bodyPart of SPINE_NODE_PARTS) {
+      let node = spineNodes.get(bodyPart);
+      if (!node) {
+        node = new Mesh(
+          new SphereGeometry(0.025, 16, 12),
+          new MeshBasicMaterial({
+            color: 0xf2f4f8,
+            transparent: true,
+            opacity: 0.85,
+            depthTest: false,
+          })
+        );
+        node.renderOrder = 8;
+        spineNodeGroup.add(node);
+        spineNodes.set(bodyPart, node);
+      }
+
+      const position = bones.get(bodyPart)?.headPositionG;
+      if (!position) {
+        node.visible = false;
+        continue;
+      }
+
+      node.visible = true;
+      node.position.set(
+        position.x ?? 0,
+        position.y ?? 0,
+        position.z ?? 0
+      );
+    }
   };
 
   const ensureRetargetMarker = (role: TrackerRetargetRole) => {
@@ -389,12 +441,18 @@ function initializePreview(
         skeletonOffset = newSkeletinOffset;
         skeletonGroup.position.set(0, skeletonOffset, 0);
         retargetGroup.position.set(0, skeletonOffset, 0);
+        spineNodeGroup.position.set(0, skeletonOffset, 0);
       }
     },
+    updateSpineNodes,
     updateRetargetTargets,
     destroy: () => {
       cancelAnimationFrame(animationFrameId);
       skeletonHelper.dispose();
+      spineNodes.forEach((node) => {
+        node.geometry.dispose();
+        (node.material as MeshBasicMaterial).dispose();
+      });
       retargetMarkers.forEach(({ sourceDisc, targetDisc, line }) => {
         sourceDisc.geometry.dispose();
         (sourceDisc.material as MeshBasicMaterial).dispose();
@@ -476,6 +534,7 @@ function SkeletonVisualizer({
   disabled = false,
   retargetConfig,
   selectedRetargetRole,
+  showSpineNodes = false,
   showSourceTargets = false,
   showRetargetTargets = false,
   showDisplacementLines = true,
@@ -485,6 +544,7 @@ function SkeletonVisualizer({
   disabled?: boolean;
   retargetConfig?: TrackerRetargetConfig;
   selectedRetargetRole?: TrackerRetargetRole;
+  showSpineNodes?: boolean;
   showSourceTargets?: boolean;
   showRetargetTargets?: boolean;
   showDisplacementLines?: boolean;
@@ -515,6 +575,12 @@ function SkeletonVisualizer({
     if (!context || disabled) return;
     context.updatesBones(bones);
   }, [bones, disabled]);
+
+  useEffect(() => {
+    const context = previewContext.current;
+    if (!context || disabled) return;
+    context.updateSpineNodes(bones, showSpineNodes);
+  }, [bones, showSpineNodes, disabled]);
 
   useEffect(() => {
     const context = previewContext.current;
@@ -619,6 +685,7 @@ export function SkeletonVisualizerWidget({
   toggleDisabled,
   retargetConfig,
   selectedRetargetRole,
+  showSpineNodes = false,
   showSourceTargets = false,
   showRetargetTargets = false,
   showDisplacementLines = true,
@@ -629,6 +696,7 @@ export function SkeletonVisualizerWidget({
   toggleDisabled?: () => void;
   retargetConfig?: TrackerRetargetConfig;
   selectedRetargetRole?: TrackerRetargetRole;
+  showSpineNodes?: boolean;
   showSourceTargets?: boolean;
   showRetargetTargets?: boolean;
   showDisplacementLines?: boolean;
@@ -650,6 +718,7 @@ export function SkeletonVisualizerWidget({
             disabled={disabled}
             retargetConfig={retargetConfig}
             selectedRetargetRole={selectedRetargetRole}
+            showSpineNodes={showSpineNodes}
             showSourceTargets={showSourceTargets}
             showRetargetTargets={showRetargetTargets}
             showDisplacementLines={showDisplacementLines}
