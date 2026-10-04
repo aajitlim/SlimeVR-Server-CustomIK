@@ -29,6 +29,8 @@ export type TrackerRetargetAdjustment = {
 export type TrackerRetargetConfig = {
   enabled: boolean;
   hipFloorLiftWeight: number;
+  spineArticulationEnabled: boolean;
+  spineCurvePower: number;
   trackers: Record<TrackerRetargetRole, TrackerRetargetAdjustment>;
 };
 
@@ -69,6 +71,8 @@ const defaultAdjustment = (): TrackerRetargetAdjustment => ({
 export const makeDefaultTrackerRetargetConfig = (): TrackerRetargetConfig => ({
   enabled: false,
   hipFloorLiftWeight: 0,
+  spineArticulationEnabled: true,
+  spineCurvePower: 1,
   trackers: Object.fromEntries(
     RETARGET_ROLES.map((role) => [role, defaultAdjustment()])
   ) as Record<TrackerRetargetRole, TrackerRetargetAdjustment>,
@@ -124,6 +128,17 @@ export function normalizeTrackerRetargetConfig(
         )
       )
     ),
+    spineArticulationEnabled:
+      typeof message.spineArticulationEnabled === 'boolean'
+        ? message.spineArticulationEnabled
+        : defaults.spineArticulationEnabled,
+    spineCurvePower: Math.min(
+      4,
+      Math.max(
+        0.25,
+        finiteNumber(message.spineCurvePower, defaults.spineCurvePower)
+      )
+    ),
     trackers,
   };
 }
@@ -152,6 +167,8 @@ export function useTrackerRetargeting() {
       type: 'retarget_set',
       enabled: normalized.enabled,
       hipFloorLiftWeight: normalized.hipFloorLiftWeight,
+      spineArticulationEnabled: normalized.spineArticulationEnabled,
+      spineCurvePower: normalized.spineCurvePower,
       trackers: normalized.trackers,
     });
   };
