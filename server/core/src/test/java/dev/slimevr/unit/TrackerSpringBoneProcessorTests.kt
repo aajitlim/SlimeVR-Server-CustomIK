@@ -110,6 +110,52 @@ class TrackerSpringBoneProcessorTests {
 	}
 
 	@Test
+	fun springStateIsIndependentPerTrackerRole() {
+		val processor = TrackerSpringBoneProcessor()
+		val config = TrackerSpringBoneConfig(true, 0.05f, 10f, 1f)
+
+		var time = 1_000_000_000L
+		val chestBase = Vector3(0f, 1.4f, 0f)
+		val waistBase = Vector3(0f, 1.0f, 0f)
+
+		processor.apply(
+			TrackerRole.CHEST,
+			chestBase,
+			config,
+			time,
+			accelerationY = 1f,
+		)
+		processor.apply(
+			TrackerRole.WAIST,
+			waistBase,
+			config,
+			time,
+			accelerationY = 1f,
+		)
+
+		time += 16_666_667L
+		processor.apply(
+			TrackerRole.CHEST,
+			chestBase,
+			config,
+			time,
+			accelerationY = 2f,
+		)
+
+		val waistOutput = processor.apply(
+			TrackerRole.WAIST,
+			waistBase,
+			config,
+			time,
+			accelerationY = 1f,
+		)
+
+		assertEquals(waistBase.x, waistOutput.x)
+		assertEquals(waistBase.y, waistOutput.y)
+		assertEquals(waistBase.z, waistOutput.z)
+	}
+
+	@Test
 	fun staleFrameGapResetsSpringInsteadOfExploding() {
 		val processor = TrackerSpringBoneProcessor()
 		val config = TrackerSpringBoneConfig(true, 0.05f, 12f, 1f)
