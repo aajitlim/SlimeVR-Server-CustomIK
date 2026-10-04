@@ -26,6 +26,8 @@ export interface WebSocketApi {
   sendDataFeedPacket: (type: DataFeedMessage, data: DataFeedPacketType) => void;
   usePubSubPacket: <T>(type: PubSubUnion, callback: (packet: T) => void) => void;
   sendPubSubPacket: (type: PubSubUnion, data: PubSubPacketType) => void;
+  useTextPacket: <T>(type: string, callback: (packet: T) => void) => void;
+  sendTextPacket: (data: unknown) => void;
 }
 
 export const WebSocketApiContext = createContext<WebSocketApi>(undefined as never);
@@ -41,6 +43,7 @@ export function useProvideWebsocketApi(): WebSocketApi {
   const rpclistenerRef = useRef<EventTarget>(new EventTarget());
   const pubsublistenerRef = useRef<EventTarget>(new EventTarget());
   const datafeedlistenerRef = useRef<EventTarget>(new EventTarget());
+  const textlistenerRef = useRef<EventTarget>(new EventTarget());
   const [isFirstConnection, setFirstConnection] = useState(true);
   const [timedOut, setTimedOut] = useState(false);
   const [isConnected, setConnected] = useState(false);
@@ -68,7 +71,20 @@ export function useProvideWebsocketApi(): WebSocketApi {
     rpcPacketCounterRef.current = 0;
   };
 
-  const onMessage = async (event: { data: Blob }) => {
+  const onMessage = async (event: MessageEvent<Blob | string>) => {
+    if (typeof event.data === 'string') {
+      try {
+        const message = JSON.parse(event.data);
+        if (typeof message?.type !== 'string') return;
+        textlistenerRef.current.dispatchEvent(
+          new CustomEvent(message.type, { detail: message })
+        );
+      } catch {
+        return;
+      }
+      return;
+    }
+
     if (!event.data.arrayBuffer) return;
     const buffer = await event.data.arrayBuffer();
 
@@ -136,6 +152,11 @@ export function useProvideWebsocketApi(): WebSocketApi {
     fbb.finish(message.pack(fbb));
 
     webSocketRef.current.send(fbb.asUint8Array());
+  };
+
+  const sendTextPacket = (data: unknown): void => {
+    if (webSocketRef.current?.readyState !== WebSocket.OPEN) return;
+    webSocketRef.current.send(JSON.stringify(data));
   };
 
   const sendPubSubPacket = (type: PubSubUnion, data: PubSubPacketType): void => {
@@ -233,9 +254,21 @@ export function useProvideWebsocketApi(): WebSocketApi {
         };
       }, [callback, type]);
     },
+    useTextPacket: <T>(type: string, callback: (packet: T) => void) => {
+      useEffect(() => {
+        const onEvent = (event: CustomEventInit) => {
+          callback(event.detail);
+        };
+        textlistenerRef.current.addEventListener(type, onEvent);
+        return () => {
+          textlistenerRef.current.removeEventListener(type, onEvent);
+        };
+      }, [callback, type]);
+    },
     sendRPCPacket,
     sendDataFeedPacket,
     sendPubSubPacket,
+    sendTextPacket,
   };
 }
 
