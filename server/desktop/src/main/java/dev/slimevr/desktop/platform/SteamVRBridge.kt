@@ -9,6 +9,7 @@ import dev.slimevr.config.BridgeConfig
 import dev.slimevr.desktop.platform.ProtobufMessages.*
 import dev.slimevr.protocol.rpc.settings.RPCSettingsHandler
 import dev.slimevr.tracking.processor.retarget.TrackerPositionRetargeter
+import dev.slimevr.tracking.processor.retarget.TrackerSpringBoneProcessor
 import dev.slimevr.tracking.trackers.DeviceOrigin
 import dev.slimevr.tracking.trackers.Tracker
 import dev.slimevr.tracking.trackers.TrackerPosition
@@ -114,6 +115,7 @@ abstract class SteamVRBridge(
 	protected val runnerThread: Thread = Thread(this, threadName)
 	private var bindingsProviderManager: BindingsProviderManager? = null
 	protected val config: BridgeConfig = server.configManager.vrConfig.getBridge(bridgeSettingsKey)
+	private val springBoneProcessor = TrackerSpringBoneProcessor()
 	var connected: Boolean = false
 
 	/**
@@ -123,25 +125,43 @@ abstract class SteamVRBridge(
 	 */
 	@VRServerThread
 	override fun getTrackerOutputPosition(localTracker: Tracker): Vector3 {
-		if (!config.positionRetargetingEnabled || !localTracker.hasPosition) {
-			return super.getTrackerOutputPosition(localTracker)
+		var outputPosition = super.getTrackerOutputPosition(localTracker)
+		if (!localTracker.hasPosition) return outputPosition
+
+		val role = localTracker.trackerPosition?.trackerRole ?: return outputPosition
+
+		if (config.positionRetargetingEnabled) {
+			val adjustment = config.getTrackerPositionOffset(role)
+			if (adjustment != null) {
+				val bodyYaw = server.humanPoseManager.skeleton.hipBone
+					.getGlobalRotation()
+					.project(POS_Y)
+					.unit()
+
+				outputPosition = TrackerPositionRetargeter.apply(
+					outputPosition,
+					bodyYaw,
+					adjustment,
+				)
+			}
 		}
 
-		val role = localTracker.trackerPosition?.trackerRole
-			?: return super.getTrackerOutputPosition(localTracker)
-		val adjustment = config.getTrackerPositionOffset(role)
-			?: return super.getTrackerOutputPosition(localTracker)
+		if (config.springBonesEnabled) {
+			val springConfig = config.getTrackerSpringBone(role)
+			if (springConfig?.enabled == true) {
+				outputPosition = springBoneProcessor.apply(
+					role,
+					outputPosition,
+					springConfig,
+				)
+			} else {
+				springBoneProcessor.reset(role)
+			}
+		} else {
+			springBoneProcessor.reset(role)
+		}
 
-		val bodyYaw = server.humanPoseManager.skeleton.hipBone
-			.getGlobalRotation()
-			.project(POS_Y)
-			.unit()
-
-		return TrackerPositionRetargeter.apply(
-			localTracker.position,
-			bodyYaw,
-			adjustment,
-		)
+		return outputPosition
 	}
 
 	@VRServerThread
