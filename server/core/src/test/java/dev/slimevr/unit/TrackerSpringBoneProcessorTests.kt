@@ -110,6 +110,75 @@ class TrackerSpringBoneProcessorTests {
 	}
 
 	@Test
+	fun zeroDerivativeWeightsDoNotInjectImuMotion() {
+		val processor = TrackerSpringBoneProcessor()
+		val config = TrackerSpringBoneConfig(true, 0.05f, 10f, 1f).apply {
+			derivativeDriverEnabled = true
+			accelerationWeight = 0f
+			jerkWeight = 0f
+			snapWeight = 0f
+		}
+		val source = Vector3(1f, 2f, 3f)
+
+		var time = 1_000_000_000L
+		processor.apply(role, source, config, time, accelerationY = 1f)
+
+		time += 16_666_667L
+		processor.apply(role, source, config, time, accelerationY = 1f)
+
+		time += 16_666_667L
+		val output = processor.apply(
+			role,
+			source,
+			config,
+			time,
+			accelerationY = 2f,
+		)
+
+		assertEquals(source.x, output.x)
+		assertEquals(source.y, output.y)
+		assertEquals(source.z, output.z)
+	}
+
+	@Test
+	fun jerkOnlyDerivativeDriverRespondsToAccelerationRateChange() {
+		val processor = TrackerSpringBoneProcessor()
+		val config = TrackerSpringBoneConfig(true, 0.03f, 10f, 1f).apply {
+			derivativeDriverEnabled = true
+			accelerationWeight = 0f
+			jerkWeight = 1f
+			snapWeight = 0f
+			derivativeResponse = 0.7f
+		}
+		val source = Vector3(1f, 2f, 3f)
+
+		var time = 1_000_000_000L
+		processor.apply(role, source, config, time, accelerationY = 1f)
+
+		time += 16_666_667L
+		processor.apply(role, source, config, time, accelerationY = 1f)
+
+		// First changed sample initializes derivative history.
+		time += 16_666_667L
+		processor.apply(role, source, config, time, accelerationY = 1.4f)
+
+		// A second change produces a non-zero filtered jerk.
+		time += 16_666_667L
+		val output = processor.apply(
+			role,
+			source,
+			config,
+			time,
+			accelerationY = 2f,
+		)
+
+		assertEquals(source.x, output.x)
+		assertEquals(source.z, output.z)
+		assertTrue(output.y != source.y)
+		assertTrue(abs(output.y - source.y) <= config.distance + 1e-5f)
+	}
+
+	@Test
 	fun springStateIsIndependentPerTrackerRole() {
 		val processor = TrackerSpringBoneProcessor()
 		val config = TrackerSpringBoneConfig(true, 0.05f, 10f, 1f)
