@@ -9,6 +9,7 @@ import {
   SettingsPagePaneLayout,
 } from '@/components/settings/SettingsPageLayout';
 import { SkeletonVisualizerWidget } from '@/components/widgets/SkeletonVisualizerWidget';
+import { SpringBonesSettings } from '@/components/settings/pages/SpringBonesSettings';
 import {
   makeDefaultTrackerRetargetConfig,
   RETARGET_ROLES,
@@ -124,6 +125,9 @@ export function TrackerRetargetingSettings() {
     useTrackerRetargeting();
   const [selectedRole, setSelectedRole] =
     useState<TrackerRetargetRole>('waist');
+  const [activeSubtab, setActiveSubtab] = useState<
+    'retargeting' | 'spring_bones'
+  >('retargeting');
   const [showSpineNodes, setShowSpineNodes] = useState(true);
   const [showSourceTargets, setShowSourceTargets] = useState(true);
   const [showRetargetTargets, setShowRetargetTargets] = useState(true);
@@ -203,9 +207,30 @@ export function TrackerRetargetingSettings() {
               Reload from server
             </Button>
           </div>
+
+          <div className="grid sm:grid-cols-2 gap-2 mt-2">
+            <Button
+              variant={activeSubtab === 'retargeting' ? 'tertiary' : 'secondary'}
+              onClick={() => setActiveSubtab('retargeting')}
+            >
+              Retargeting / Spine
+            </Button>
+            <Button
+              variant={activeSubtab === 'spring_bones' ? 'tertiary' : 'secondary'}
+              onClick={() => setActiveSubtab('spring_bones')}
+            >
+              Spring Bones
+            </Button>
+          </div>
         </div>
 
-        <div className="grid lg:grid-cols-[minmax(0,1fr)_minmax(380px,0.9fr)] gap-4 mt-4">
+        <div
+          className={
+            activeSubtab === 'retargeting'
+              ? 'grid lg:grid-cols-[minmax(0,1fr)_minmax(380px,0.9fr)] gap-4 mt-4'
+              : 'hidden'
+          }
+        >
           <div className="flex flex-col gap-4">
             <div className="bg-background-60 rounded-lg p-3 flex flex-col gap-3">
               <Typography variant="section-title">
@@ -620,6 +645,15 @@ export function TrackerRetargetingSettings() {
             </div>
           </div>
         </div>
+
+        {activeSubtab === 'spring_bones' && (
+          <SpringBonesSettings
+            config={config}
+            selectedRole={selectedRole}
+            setSelectedRole={setSelectedRole}
+            updateConfig={updateConfig}
+          />
+        )}
       </SettingsPagePaneLayout>
     </SettingsPageLayout>
   );
