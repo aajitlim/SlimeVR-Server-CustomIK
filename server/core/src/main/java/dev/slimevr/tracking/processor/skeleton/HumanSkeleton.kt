@@ -1086,6 +1086,8 @@ class HumanSkeleton(
 					upperChestTracker,
 					chestTracker,
 				),
+				verticalLengthSensitivity =
+					verticalLengthSensitivity(upperChestBone, upperChestRest),
 			),
 			BoneComplianceSegmentInput(
 				key = BoneComplianceConfig.CHEST_TO_WAIST,
@@ -1098,6 +1100,8 @@ class HumanSkeleton(
 					chestTracker,
 					waistTracker,
 				),
+				verticalLengthSensitivity =
+					verticalLengthSensitivity(chestBone, chestRest),
 			),
 			BoneComplianceSegmentInput(
 				key = BoneComplianceConfig.WAIST_TO_HIP,
@@ -1110,10 +1114,17 @@ class HumanSkeleton(
 					waistTracker,
 					hipTracker,
 				),
+				verticalLengthSensitivity =
+					verticalLengthSensitivity(waistBone, waistRest),
 			),
 		)
 
-		val strains = boneComplianceProcessor.solve(inputs, config)
+		val groundClosure = buildBoneComplianceGroundClosure(config)
+		val strains = boneComplianceProcessor.solve(
+			inputs = inputs,
+			config = config,
+			groundClosure = groundClosure,
+		)
 
 		upperChestBone.length =
 			upperChestRest *
@@ -1124,6 +1135,120 @@ class HumanSkeleton(
 		waistBone.length =
 			waistRest *
 				(1f + (strains[BoneComplianceConfig.WAIST_TO_HIP] ?: 0f))
+	}
+
+	private fun verticalLengthSensitivity(
+		bone: Bone,
+		restLength: Float,
+	): Float {
+		if (restLength <= 1e-5f) return 0f
+		return (
+			(bone.getTailPosition().y - bone.getPosition().y) /
+				restLength
+			).coerceIn(-1f, 1f)
+	}
+
+	private fun buildBoneComplianceGroundClosure(
+		config: BoneComplianceConfig,
+	): BoneComplianceGroundClosureInput? {
+		if (!config.groundClosureEnabled) return null
+
+		// Ground Closure deliberately consumes the previous completed Leg Tweaks
+		// contact state. The current rigid FK is therefore evaluated against a
+		// contact decision that the current compliance solve cannot change.
+		val previous = legTweaks.bufferHead
+		if (previous.parent == null) return null
+
+		val leftConfidence =
+			groundClosureFootConfidence(
+				previous.leftLegState,
+				previous.leftLegNumericalState,
+			)
+		val rightConfidence =
+			groundClosureFootConfidence(
+				previous.rightLegState,
+				previous.rightLegNumericalState,
+			)
+
+		if (config.groundClosureRequireBothFeet &&
+			(leftConfidence <= 0f || rightConfidence <= 0f)
+		) {
+			return null
+		}
+
+		val leftCurrent = leftFootTrackerBone.getTailPosition()
+		val rightCurrent = rightFootTrackerBone.getTailPosition()
+		val leftTarget = previous.leftFootPositionCorrected
+		val rightTarget = previous.rightFootPositionCorrected
+
+		var weightedResidual = 0f
+		var weightSum = 0f
+		var plantedCount = 0
+
+		var leftResidual: Float? = null
+		var rightResidual: Float? = null
+
+		if (leftConfidence > 0f && leftTarget != NULL) {
+			leftResidual = leftCurrent.y - leftTarget.y
+			weightedResidual += leftResidual * leftConfidence
+			weightSum += leftConfidence
+			plantedCount++
+		}
+		if (rightConfidence > 0f && rightTarget != NULL) {
+			rightResidual = rightCurrent.y - rightTarget.y
+			weightedResidual += rightResidual * rightConfidence
+			weightSum += rightConfidence
+			plantedCount++
+		}
+
+		if (weightSum <= 1e-5f || plantedCount == 0) return null
+
+		val commonResidual = weightedResidual / weightSum
+		val bilateralDisagreement =
+			if (leftResidual != null && rightResidual != null) {
+				abs(leftResidual - rightResidual)
+			} else {
+				0f
+			}
+
+		var confidence =
+			if (plantedCount == 2) {
+				minOf(leftConfidence, rightConfidence)
+			} else {
+				maxOf(leftConfidence, rightConfidence) * 0.65f
+			}
+
+		// Large bilateral disagreement is handled again inside the processor as
+		// a hard geometric gate. This softer confidence falloff starts reducing
+		// influence before that hard tolerance is reached.
+		val tolerance =
+			config.groundClosureBilateralToleranceMeters.coerceAtLeast(0.001f)
+		confidence *=
+			(1f - bilateralDisagreement / tolerance)
+				.coerceIn(0f, 1f)
+
+		if (confidence <= 0f) return null
+
+		return BoneComplianceGroundClosureInput(
+			commonFootResidualMeters = commonResidual,
+			contactConfidence = confidence,
+			bilateralDisagreementMeters = bilateralDisagreement,
+		)
+	}
+
+	private fun groundClosureFootConfidence(
+		legState: Int,
+		numericalState: Float,
+	): Float {
+		if (legState != LegTweaksBuffer.LOCKED) return 0f
+
+		// LegTweaks numerical state grows as velocity/acceleration approach the
+		// unlock thresholds. Keep a locked foot useful while reducing trust as
+		// it approaches release.
+		return (
+			1f /
+				(1f + numericalState.coerceAtLeast(0f))
+			).coerceIn(0.25f, 1f)
 	}
 
 	private fun relativeRotationAngle(
