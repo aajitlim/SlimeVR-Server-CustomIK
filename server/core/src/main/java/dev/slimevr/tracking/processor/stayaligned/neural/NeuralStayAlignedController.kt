@@ -52,7 +52,7 @@ object NeuralStayAlignedController {
 		val key: String,
 		var trackerName: String,
 		var trackerPosition: TrackerPosition?,
-		var hidden: FloatArray = model.newHidden(),
+		var hidden: FloatArray,
 		val history: ArrayDeque<NeuralYawSequenceSample> = ArrayDeque(),
 		var historyDurationSeconds: Float = 0f,
 		var lastSampleNanos: Long = 0L,
@@ -92,6 +92,7 @@ object NeuralStayAlignedController {
 				key = key,
 				trackerName = tracker.name,
 				trackerPosition = tracker.trackerPosition,
+				hidden = model.newHidden(),
 			)
 		}
 
