@@ -10,6 +10,21 @@ data class BoneComplianceSegmentInput(
 	val restLength: Float,
 	val relativeRotationRadians: Float,
 	val relativeAccelerationY: Float?,
+	/**
+	 * d(footY) / d(segmentLength). A segment pointing straight down is near -1,
+	 * horizontal is near 0, and straight up is near +1.
+	 */
+	val verticalLengthSensitivity: Float = 0f,
+)
+
+data class BoneComplianceGroundClosureInput(
+	/**
+	 * Positive means the planted feet are currently above their previous trusted
+	 * contact height; negative means they are below it.
+	 */
+	val commonFootResidualMeters: Float,
+	val contactConfidence: Float,
+	val bilateralDisagreementMeters: Float = 0f,
 )
 
 /**
@@ -34,15 +49,20 @@ class BoneComplianceProcessor {
 	)
 
 	private val states = mutableMapOf<String, SegmentState>()
+	private var filteredGroundResidualMeters = 0f
+	private var groundLastTimeNanos = 0L
+	private var hasGroundResidual = false
 
 	fun reset() {
 		states.clear()
+		resetGroundClosureState()
 	}
 
 	fun solve(
 		inputs: List<BoneComplianceSegmentInput>,
 		config: BoneComplianceConfig,
 		nowNanos: Long = System.nanoTime(),
+		groundClosure: BoneComplianceGroundClosureInput? = null,
 	): Map<String, Float> {
 		if (!config.enabled || config.overallCompliance <= 0f) {
 			reset()
@@ -74,6 +94,27 @@ class BoneComplianceProcessor {
 
 		if (config.preserveTorsoLength && active.size > 1) {
 			projectZeroNetLengthChange(active, config, solved)
+		}
+
+		if (config.groundClosureEnabled &&
+			groundClosure != null &&
+			active.isNotEmpty()
+		) {
+			applyGroundClosure(
+				active = active,
+				config = config,
+				solved = solved,
+				groundClosure = groundClosure,
+				nowNanos = nowNanos,
+			)
+
+			// Ground Closure must obey the same optional calibrated-total-length
+			// constraint as the normal compliance solve.
+			if (config.preserveTorsoLength && active.size > 1) {
+				projectZeroNetLengthChange(active, config, solved)
+			}
+		} else {
+			resetGroundClosureState()
 		}
 
 		// Keep the persistent state aligned with the simultaneously projected
@@ -225,6 +266,139 @@ class BoneComplianceProcessor {
 		return signal * limit * sensorInfluence
 	}
 
+	private fun applyGroundClosure(
+		active: List<BoneComplianceSegmentInput>,
+		config: BoneComplianceConfig,
+		solved: MutableMap<String, Float>,
+		groundClosure: BoneComplianceGroundClosureInput,
+		nowNanos: Long,
+	) {
+		val confidence = groundClosure.contactConfidence.coerceIn(0f, 1f)
+		if (confidence <= 0f) {
+			resetGroundClosureState()
+			return
+		}
+
+		val bilateralTolerance =
+			config.groundClosureBilateralToleranceMeters.coerceIn(0.001f, 0.20f)
+		val disagreement = groundClosure.bilateralDisagreementMeters.coerceAtLeast(0f)
+		if (disagreement >= bilateralTolerance) {
+			// Left/right disagreement is not a torso-wide vertical closure error.
+			// Do not make the spine chase an asymmetric leg problem.
+			resetGroundClosureState()
+			return
+		}
+
+		val dt =
+			if (groundLastTimeNanos == 0L) {
+				1f / 60f
+			} else {
+				((nowNanos - groundLastTimeNanos).toDouble() / 1_000_000_000.0)
+					.toFloat()
+					.coerceIn(MIN_DT_SECONDS, MAX_DT_SECONDS)
+			}
+		groundLastTimeNanos = nowNanos
+
+		val residual =
+			groundClosure.commonFootResidualMeters
+				.coerceIn(-MAX_RAW_GROUND_RESIDUAL_METERS, MAX_RAW_GROUND_RESIDUAL_METERS)
+
+		if (!hasGroundResidual) {
+			filteredGroundResidualMeters = residual
+			hasGroundResidual = true
+		} else {
+			val followHz =
+				lerp(
+					GROUND_FOLLOW_HZ_SMOOTH,
+					GROUND_FOLLOW_HZ_REACTIVE,
+					config.response.coerceIn(0f, 1f),
+				)
+			val follow = (dt * followHz).coerceIn(0f, 1f)
+			filteredGroundResidualMeters +=
+				(residual - filteredGroundResidualMeters) * follow
+		}
+
+		val asymmetryGate =
+			(1f - disagreement / bilateralTolerance)
+				.coerceIn(0f, 1f)
+		val strength = config.groundClosureStrength.coerceIn(0f, 1f)
+		val maxCorrection =
+			config.groundClosureMaxCorrectionMeters.coerceIn(0f, 0.15f)
+
+		// If feet are above the trusted ground height, desiredDeltaY is negative.
+		val desiredDeltaY =
+			(-filteredGroundResidualMeters * confidence * asymmetryGate * strength)
+				.coerceIn(-maxCorrection, maxCorrection)
+
+		if (abs(desiredDeltaY) < GROUND_CORRECTION_EPSILON) return
+
+		val correctionDirection = FloatArray(active.size)
+		val jacobian = FloatArray(active.size)
+		val totalLengthVector = FloatArray(active.size)
+
+		for (i in active.indices) {
+			val input = active[i]
+			val segmentConfig = config.getSegment(input.key)
+			val j =
+				input.restLength *
+					input.verticalLengthSensitivity.coerceIn(-1f, 1f)
+			val weight =
+				segmentConfig.compliance.coerceIn(0f, 1f)
+					.coerceAtLeast(MIN_GROUND_ALLOCATION_WEIGHT)
+
+			jacobian[i] = j
+			correctionDirection[i] = j * weight
+			totalLengthVector[i] = input.restLength
+		}
+
+		if (config.preserveTorsoLength && active.size > 1) {
+			// Project the correction direction into the zero-total-length-change
+			// subspace before solving the foot-height residual.
+			var dot = 0f
+			var norm = 0f
+			for (i in active.indices) {
+				dot += correctionDirection[i] * totalLengthVector[i]
+				norm += totalLengthVector[i] * totalLengthVector[i]
+			}
+			if (norm > MIN_LENGTH * MIN_LENGTH) {
+				val scale = dot / norm
+				for (i in active.indices) {
+					correctionDirection[i] -= totalLengthVector[i] * scale
+				}
+			}
+		}
+
+		var denominator = 0f
+		for (i in active.indices) {
+			denominator += jacobian[i] * correctionDirection[i]
+		}
+		if (abs(denominator) < MIN_GROUND_JACOBIAN_DENOMINATOR) return
+
+		val correctionScale = desiredDeltaY / denominator
+
+		for (i in active.indices) {
+			val input = active[i]
+			val segmentConfig = config.getSegment(input.key)
+			val blend =
+				config.overallCompliance.coerceIn(0f, 1f) *
+					segmentConfig.compliance.coerceIn(0f, 1f)
+			val minStrain =
+				-segmentConfig.compressionLimit.coerceIn(0f, MAX_STRAIN_LIMIT) * blend
+			val maxStrain =
+				segmentConfig.extensionLimit.coerceIn(0f, MAX_STRAIN_LIMIT) * blend
+
+			val current = solved[input.key] ?: 0f
+			val delta = correctionDirection[i] * correctionScale
+			solved[input.key] = (current + delta).coerceIn(minStrain, maxStrain)
+		}
+	}
+
+	private fun resetGroundClosureState() {
+		filteredGroundResidualMeters = 0f
+		groundLastTimeNanos = 0L
+		hasGroundResidual = false
+	}
+
 	private fun projectZeroNetLengthChange(
 		active: List<BoneComplianceSegmentInput>,
 		config: BoneComplianceConfig,
@@ -321,5 +495,12 @@ class BoneComplianceProcessor {
 		private const val STRAIN_FOLLOW_HZ_SMOOTH = 3.5f
 		private const val STRAIN_FOLLOW_HZ_REACTIVE = 12f
 		private const val LENGTH_PROJECTION_EPSILON = 1e-6f
+
+		private const val GROUND_FOLLOW_HZ_SMOOTH = 4f
+		private const val GROUND_FOLLOW_HZ_REACTIVE = 14f
+		private const val MAX_RAW_GROUND_RESIDUAL_METERS = 0.15f
+		private const val GROUND_CORRECTION_EPSILON = 0.00005f
+		private const val MIN_GROUND_ALLOCATION_WEIGHT = 0.05f
+		private const val MIN_GROUND_JACOBIAN_DENOMINATOR = 1e-6f
 	}
 }
