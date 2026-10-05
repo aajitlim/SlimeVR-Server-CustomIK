@@ -46,6 +46,8 @@ class VRConfig {
 
 	val stayAlignedConfig = StayAlignedConfig()
 
+	val neuralStayAligned = NeuralStayAlignedConfig()
+
 	val hidConfig = HIDConfig()
 
 	@JsonDeserialize(using = TrackerConfigMapDeserializer::class)
