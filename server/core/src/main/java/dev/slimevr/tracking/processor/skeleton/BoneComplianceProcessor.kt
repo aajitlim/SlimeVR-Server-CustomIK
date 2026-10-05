@@ -304,19 +304,21 @@ class BoneComplianceProcessor {
 				.coerceIn(-MAX_RAW_GROUND_RESIDUAL_METERS, MAX_RAW_GROUND_RESIDUAL_METERS)
 
 		if (!hasGroundResidual) {
-			filteredGroundResidualMeters = residual
+			// Engage from zero so a newly trusted contact cannot instantly jump
+			// the torso to the current residual.
+			filteredGroundResidualMeters = 0f
 			hasGroundResidual = true
-		} else {
-			val followHz =
-				lerp(
-					GROUND_FOLLOW_HZ_SMOOTH,
-					GROUND_FOLLOW_HZ_REACTIVE,
-					config.response.coerceIn(0f, 1f),
-				)
-			val follow = (dt * followHz).coerceIn(0f, 1f)
-			filteredGroundResidualMeters +=
-				(residual - filteredGroundResidualMeters) * follow
 		}
+
+		val followHz =
+			lerp(
+				GROUND_FOLLOW_HZ_SMOOTH,
+				GROUND_FOLLOW_HZ_REACTIVE,
+				config.response.coerceIn(0f, 1f),
+			)
+		val follow = (dt * followHz).coerceIn(0f, 1f)
+		filteredGroundResidualMeters +=
+			(residual - filteredGroundResidualMeters) * follow
 
 		val asymmetryGate =
 			(1f - disagreement / bilateralTolerance)
