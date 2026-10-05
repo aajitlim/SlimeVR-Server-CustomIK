@@ -335,6 +335,26 @@ class WebSocketVRBridge(
 			server.configManager.vrConfig.boneCompliance.response =
 				json["boneComplianceResponse"].asDouble().toFloat().coerceIn(0f, 1f)
 		}
+		if (json.has("boneComplianceGroundClosureEnabled")) {
+			server.configManager.vrConfig.boneCompliance.groundClosureEnabled =
+				json["boneComplianceGroundClosureEnabled"].asBoolean()
+		}
+		if (json.has("boneComplianceGroundClosureStrength")) {
+			server.configManager.vrConfig.boneCompliance.groundClosureStrength =
+				json["boneComplianceGroundClosureStrength"].asDouble().toFloat().coerceIn(0f, 1f)
+		}
+		if (json.has("boneComplianceGroundClosureMaxCorrectionMeters")) {
+			server.configManager.vrConfig.boneCompliance.groundClosureMaxCorrectionMeters =
+				json["boneComplianceGroundClosureMaxCorrectionMeters"].asDouble().toFloat().coerceIn(0f, 0.15f)
+		}
+		if (json.has("boneComplianceGroundClosureBilateralToleranceMeters")) {
+			server.configManager.vrConfig.boneCompliance.groundClosureBilateralToleranceMeters =
+				json["boneComplianceGroundClosureBilateralToleranceMeters"].asDouble().toFloat().coerceIn(0.001f, 0.20f)
+		}
+		if (json.has("boneComplianceGroundClosureRequireBothFeet")) {
+			server.configManager.vrConfig.boneCompliance.groundClosureRequireBothFeet =
+				json["boneComplianceGroundClosureRequireBothFeet"].asBoolean()
+		}
 
 		val boneComplianceSegments = json["boneComplianceSegments"] as? ObjectNode
 		boneComplianceSegments?.fields()?.forEach { (segmentKey, value) ->
@@ -455,6 +475,26 @@ class WebSocketVRBridge(
 		response.put(
 			"boneComplianceResponse",
 			server.configManager.vrConfig.boneCompliance.response,
+		)
+		response.put(
+			"boneComplianceGroundClosureEnabled",
+			server.configManager.vrConfig.boneCompliance.groundClosureEnabled,
+		)
+		response.put(
+			"boneComplianceGroundClosureStrength",
+			server.configManager.vrConfig.boneCompliance.groundClosureStrength,
+		)
+		response.put(
+			"boneComplianceGroundClosureMaxCorrectionMeters",
+			server.configManager.vrConfig.boneCompliance.groundClosureMaxCorrectionMeters,
+		)
+		response.put(
+			"boneComplianceGroundClosureBilateralToleranceMeters",
+			server.configManager.vrConfig.boneCompliance.groundClosureBilateralToleranceMeters,
+		)
+		response.put(
+			"boneComplianceGroundClosureRequireBothFeet",
+			server.configManager.vrConfig.boneCompliance.groundClosureRequireBothFeet,
 		)
 		response.put(
 			"hipFloorLiftWeight",
