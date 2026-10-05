@@ -75,6 +75,11 @@ export type TrackerRetargetConfig = {
   boneComplianceOverall: number;
   boneCompliancePreserveTorsoLength: boolean;
   boneComplianceResponse: number;
+  boneComplianceGroundClosureEnabled: boolean;
+  boneComplianceGroundClosureStrength: number;
+  boneComplianceGroundClosureMaxCorrectionMeters: number;
+  boneComplianceGroundClosureBilateralToleranceMeters: number;
+  boneComplianceGroundClosureRequireBothFeet: boolean;
   neuralStayAlignedEnabled: boolean;
   neuralStayAlignedLearnFromYawResets: boolean;
   neuralStayAlignedApplyCorrections: boolean;
@@ -220,6 +225,11 @@ export const makeDefaultTrackerRetargetConfig = (): TrackerRetargetConfig => ({
   boneComplianceOverall: 0.5,
   boneCompliancePreserveTorsoLength: true,
   boneComplianceResponse: 0.5,
+  boneComplianceGroundClosureEnabled: false,
+  boneComplianceGroundClosureStrength: 0.65,
+  boneComplianceGroundClosureMaxCorrectionMeters: 0.04,
+  boneComplianceGroundClosureBilateralToleranceMeters: 0.025,
+  boneComplianceGroundClosureRequireBothFeet: true,
   neuralStayAlignedEnabled: false,
   neuralStayAlignedLearnFromYawResets: true,
   neuralStayAlignedApplyCorrections: false,
@@ -531,6 +541,44 @@ export function normalizeTrackerRetargetConfig(
         )
       )
     ),
+    boneComplianceGroundClosureEnabled:
+      typeof message.boneComplianceGroundClosureEnabled === 'boolean'
+        ? message.boneComplianceGroundClosureEnabled
+        : defaults.boneComplianceGroundClosureEnabled,
+    boneComplianceGroundClosureStrength: Math.min(
+      1,
+      Math.max(
+        0,
+        finiteNumber(
+          message.boneComplianceGroundClosureStrength,
+          defaults.boneComplianceGroundClosureStrength
+        )
+      )
+    ),
+    boneComplianceGroundClosureMaxCorrectionMeters: Math.min(
+      0.15,
+      Math.max(
+        0,
+        finiteNumber(
+          message.boneComplianceGroundClosureMaxCorrectionMeters,
+          defaults.boneComplianceGroundClosureMaxCorrectionMeters
+        )
+      )
+    ),
+    boneComplianceGroundClosureBilateralToleranceMeters: Math.min(
+      0.2,
+      Math.max(
+        0.001,
+        finiteNumber(
+          message.boneComplianceGroundClosureBilateralToleranceMeters,
+          defaults.boneComplianceGroundClosureBilateralToleranceMeters
+        )
+      )
+    ),
+    boneComplianceGroundClosureRequireBothFeet:
+      typeof message.boneComplianceGroundClosureRequireBothFeet === 'boolean'
+        ? message.boneComplianceGroundClosureRequireBothFeet
+        : defaults.boneComplianceGroundClosureRequireBothFeet,
     neuralStayAlignedEnabled:
       typeof message.neuralStayAlignedEnabled === 'boolean'
         ? message.neuralStayAlignedEnabled
@@ -683,6 +731,16 @@ export function useTrackerRetargeting() {
       boneCompliancePreserveTorsoLength:
         normalized.boneCompliancePreserveTorsoLength,
       boneComplianceResponse: normalized.boneComplianceResponse,
+      boneComplianceGroundClosureEnabled:
+        normalized.boneComplianceGroundClosureEnabled,
+      boneComplianceGroundClosureStrength:
+        normalized.boneComplianceGroundClosureStrength,
+      boneComplianceGroundClosureMaxCorrectionMeters:
+        normalized.boneComplianceGroundClosureMaxCorrectionMeters,
+      boneComplianceGroundClosureBilateralToleranceMeters:
+        normalized.boneComplianceGroundClosureBilateralToleranceMeters,
+      boneComplianceGroundClosureRequireBothFeet:
+        normalized.boneComplianceGroundClosureRequireBothFeet,
       neuralStayAlignedEnabled: normalized.neuralStayAlignedEnabled,
       neuralStayAlignedLearnFromYawResets:
         normalized.neuralStayAlignedLearnFromYawResets,
