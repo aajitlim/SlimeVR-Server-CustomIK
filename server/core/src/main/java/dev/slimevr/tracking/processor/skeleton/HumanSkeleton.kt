@@ -3,6 +3,7 @@ package dev.slimevr.tracking.processor.skeleton
 import dev.slimevr.VRServer
 import dev.slimevr.config.BoneComplianceConfig
 import dev.slimevr.config.MountingMethods
+import dev.slimevr.config.NeuralStayAlignedConfig
 import dev.slimevr.config.StayAlignedConfig
 import dev.slimevr.tracking.processor.Bone
 import dev.slimevr.tracking.processor.BoneType
@@ -225,6 +226,7 @@ class HumanSkeleton(
 	// Stay Aligned
 	var trackerSkeleton = TrackerSkeleton(this)
 	var stayAlignedConfig = StayAlignedConfig()
+	var neuralStayAlignedConfig = NeuralStayAlignedConfig()
 
 	// Constructors
 	init {
@@ -246,6 +248,7 @@ class HumanSkeleton(
 		legTweaks.setConfig(server.configManager.vrConfig.legTweaks)
 		localizer.setEnabled(humanPoseManager.getToggle(SkeletonConfigToggles.SELF_LOCALIZATION))
 		stayAlignedConfig = server.configManager.vrConfig.stayAlignedConfig
+		neuralStayAlignedConfig = server.configManager.vrConfig.neuralStayAligned
 	}
 
 	constructor(
@@ -548,7 +551,11 @@ class HumanSkeleton(
 		tapDetectionManager?.update()
 		userHeightCalibration?.tick()
 
-		StayAligned.adjustNextTracker(trackerSkeleton, stayAlignedConfig)
+		StayAligned.adjustNextTracker(
+			trackerSkeleton,
+			stayAlignedConfig,
+			neuralStayAlignedConfig,
+		)
 
 		// Compliance must never feed its previous-frame length changes back into
 		// the articulated rotation solve. Always begin FK from calibrated lengths.
