@@ -802,6 +802,99 @@ response               50%
 
 The feature therefore remains opt-in.
 
+### Planted-foot Ground Closure
+
+Bone Compliance now includes an optional **Planted-foot Ground Closure** mode.
+
+This targets the specific rigid-FK failure where torso bending changes the
+vertical projection of the spine, moves the hip, and makes both computed feet
+lift or dip together even though the real feet remain planted.
+
+Ground Closure uses the **previous completed Leg Tweaks frame** as its contact
+latch. It reads the previous left/right lock states, corrected foot positions,
+and numerical lock confidence. The current rigid-FK foot heights are compared
+against those already-established planted heights. This avoids a circular
+contact decision in which compliance changes a foot and the changed foot then
+changes the contact decision.
+
+For each trusted planted foot:
+
+    residual = currentRigidFootY - previousCorrectedPlantedFootY
+
+Positive residual means rigid FK lifted the foot; negative residual means it
+pushed the foot downward. With two planted feet, the solver uses a
+confidence-weighted common vertical residual.
+
+#### Bilateral rejection
+
+Ground Closure intentionally rejects asymmetric problems. If left and right
+planted-foot residuals disagree beyond the configured tolerance, no torso-wide
+Ground Closure correction is applied for that frame. Confidence also fades as
+the disagreement approaches the hard limit.
+
+Default bilateral tolerance:
+
+    2.5 cm
+
+This prevents one bad leg, tracker, or contact state from being converted into
+a spine-length correction.
+
+#### Contact requirement
+
+The default mode requires both feet planted. The UI exposes **Require both feet
+planted**. If disabled, one locked foot may drive closure, but its confidence
+is reduced before it reaches the torso solver.
+
+#### Jacobian-based allocation
+
+Ground Closure does not distribute strain equally. For each compliant torso
+span it estimates the vertical sensitivity of downstream foot height to a
+change in that span's length:
+
+    verticalLengthSensitivity = d(footY) / d(segmentLength)
+    J_i = restLength_i * verticalLengthSensitivity_i
+
+A nearly horizontal segment therefore has almost no vertical authority, while
+a more vertical segment receives more of the correction. This is especially
+important during forward bending: the solver does not waste strain in a
+horizontal upper-torso span merely because it occurs earlier in the chain.
+
+#### Bounded closure target
+
+The requested vertical correction is formed from the filtered common residual,
+contact confidence, bilateral agreement, and Ground Closure strength. It is
+hard-limited by **Maximum vertical correction**.
+
+Default values:
+
+    Ground Closure enabled            false
+    Ground correction strength        65%
+    Maximum vertical correction       4.0 cm
+    Bilateral disagreement tolerance  2.5 cm
+    Require both feet planted         true
+
+Every resulting segment strain still obeys the normal per-span compression,
+extension, local-compliance, and global-compliance limits.
+
+#### Preserve-total-length interaction
+
+When **Preserve total torso length** is enabled, the Ground Closure correction
+direction is projected into the zero-net-length-change subspace before solving
+the foot-height residual. The normal total-length projection is run again after
+Ground Closure. This allows the torso to redistribute effective length according
+to current geometry without silently bypassing the calibrated total-length
+constraint.
+
+If the current segment directions do not provide enough vertical authority
+under the active limits, the solver leaves some foot residual uncorrected
+instead of violating those limits.
+
+#### Non-oscillating physical correction
+
+Ground Closure is a filtered closure servo, not a mass-spring oscillator. It
+modifies the physical torso strain target before computed trackers are emitted.
+Spring Bones remain the separate downstream system for visible secondary motion.
+
 ### Relationship to the other Custom IK layers
 
 The three Custom IK systems now have separate responsibilities:
