@@ -552,7 +552,7 @@ class WebSocketVRBridge(
 			deviceNode.put("lastLoss", device.lastLoss)
 			neuralDevices.add(deviceNode)
 		}
-		neuralStatusNode.set(
+		neuralStatusNode.replace(
 			"devices",
 			neuralDevices,
 		)
