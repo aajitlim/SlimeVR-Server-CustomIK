@@ -321,8 +321,8 @@ object NeuralStayAlignedController {
 		}
 
 		val ownYaw = yawRad(rotation)
-		features[7] = sin(ownYaw)
-		features[8] = cos(ownYaw)
+		features[7] = sin(ownYaw.toDouble()).toFloat()
+		features[8] = cos(ownYaw.toDouble()).toFloat()
 
 		putRelativeYaw(
 			features,
@@ -397,15 +397,16 @@ object NeuralStayAlignedController {
 		}
 
 		val difference = Angle.ofRad(ownYaw - contextYaw).toRad()
-		features[index] = sin(difference)
-		features[index + 1] = cos(difference)
+		features[index] = sin(difference.toDouble()).toFloat()
+		features[index + 1] = cos(difference.toDouble()).toFloat()
 	}
 
 	private fun yawRad(rotation: Quaternion): Float =
 		rotation.toEulerAngles(EulerOrder.YZX).y
 
 	private fun confidenceFor(supervisionEvents: Int): Float =
-		(1f - exp(-supervisionEvents.toFloat() / 3f))
+		(1.0 - exp(-supervisionEvents.toDouble() / 3.0))
+			.toFloat()
 			.coerceIn(0f, 0.95f)
 
 	private fun clearTemporalState(
