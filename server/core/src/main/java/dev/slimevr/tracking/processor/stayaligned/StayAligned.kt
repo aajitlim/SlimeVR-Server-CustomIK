@@ -1,11 +1,13 @@
 package dev.slimevr.tracking.processor.stayaligned
 
 import dev.slimevr.VRServer
+import dev.slimevr.config.NeuralStayAlignedConfig
 import dev.slimevr.config.StayAlignedConfig
 import dev.slimevr.math.Angle
 import dev.slimevr.tracking.processor.stayaligned.StayAlignedDefaults.IMU_TO_YAW_CORRECTION
 import dev.slimevr.tracking.processor.stayaligned.StayAlignedDefaults.YAW_CORRECTION_DEFAULT
 import dev.slimevr.tracking.processor.stayaligned.adjust.AdjustTrackerYaw
+import dev.slimevr.tracking.processor.stayaligned.neural.NeuralStayAlignedController
 import dev.slimevr.tracking.processor.stayaligned.trackers.TrackerSkeleton
 
 /**
@@ -22,8 +24,12 @@ object StayAligned {
 	 * running at 1000 Hz and there are 20 trackers, each tracker is still updated 50
 	 * times a second.
 	 */
-	fun adjustNextTracker(trackers: TrackerSkeleton, config: StayAlignedConfig) {
-		if (!config.enabled) {
+	fun adjustNextTracker(
+		trackers: TrackerSkeleton,
+		config: StayAlignedConfig,
+		neuralConfig: NeuralStayAlignedConfig,
+	) {
+		if (!config.enabled && !neuralConfig.enabled) {
 			return
 		}
 
@@ -38,23 +44,38 @@ object StayAligned {
 		// Update hide correction since the config could have changed
 		trackerToAdjust.stayAligned.hideCorrection = config.hideYawCorrection
 
-		val yawCorrectionPerSec =
-			IMU_TO_YAW_CORRECTION.getOrDefault(trackerToAdjust.imuType, YAW_CORRECTION_DEFAULT)
-		if (yawCorrectionPerSec == Angle.ZERO) {
-			return
+		if (config.enabled) {
+			val yawCorrectionPerSec =
+				IMU_TO_YAW_CORRECTION.getOrDefault(
+					trackerToAdjust.imuType,
+					YAW_CORRECTION_DEFAULT,
+				)
+
+			if (yawCorrectionPerSec != Angle.ZERO) {
+				// Scale yaw correction since we're only updating one tracker per tick
+				val yawCorrection =
+					yawCorrectionPerSec *
+						VRServer.instance.fpsTimer.timePerFrame *
+						numTrackers.toFloat()
+
+				AdjustTrackerYaw.adjust(
+					trackerToAdjust,
+					trackers,
+					yawCorrection,
+					config,
+				)
+			}
 		}
 
-		// Scale yaw correction since we're only updating one tracker per tick
-		val yawCorrection =
-			yawCorrectionPerSec *
-				VRServer.instance.fpsTimer.timePerFrame *
-				numTrackers.toFloat()
-
-		AdjustTrackerYaw.adjust(
-			trackerToAdjust,
-			trackers,
-			yawCorrection,
-			config,
-		)
+		// Neural Stay Aligned samples after the deterministic solver so the
+		// feature stream can observe the current correction state. Its own
+		// correction path is independently gated and disabled by default.
+		if (neuralConfig.enabled) {
+			NeuralStayAlignedController.observeAndCorrect(
+				trackerToAdjust,
+				trackers,
+				neuralConfig,
+			)
+		}
 	}
 }
