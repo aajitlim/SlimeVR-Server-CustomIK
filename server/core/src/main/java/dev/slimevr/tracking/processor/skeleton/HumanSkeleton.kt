@@ -1202,6 +1202,7 @@ class HumanSkeleton(
 		}
 
 		if (weightSum <= 1e-5f || plantedCount == 0) return null
+		if (config.groundClosureRequireBothFeet && plantedCount < 2) return null
 
 		val commonResidual = weightedResidual / weightSum
 		val bilateralDisagreement =
@@ -1211,21 +1212,12 @@ class HumanSkeleton(
 				0f
 			}
 
-		var confidence =
+		val confidence =
 			if (plantedCount == 2) {
 				minOf(leftConfidence, rightConfidence)
 			} else {
 				maxOf(leftConfidence, rightConfidence) * 0.65f
 			}
-
-		// Large bilateral disagreement is handled again inside the processor as
-		// a hard geometric gate. This softer confidence falloff starts reducing
-		// influence before that hard tolerance is reached.
-		val tolerance =
-			config.groundClosureBilateralToleranceMeters.coerceAtLeast(0.001f)
-		confidence *=
-			(1f - bilateralDisagreement / tolerance)
-				.coerceIn(0f, 1f)
 
 		if (confidence <= 0f) return null
 
