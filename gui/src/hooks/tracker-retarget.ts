@@ -75,12 +75,53 @@ export type TrackerRetargetConfig = {
   boneComplianceOverall: number;
   boneCompliancePreserveTorsoLength: boolean;
   boneComplianceResponse: number;
+  neuralStayAlignedEnabled: boolean;
+  neuralStayAlignedLearnFromYawResets: boolean;
+  neuralStayAlignedApplyCorrections: boolean;
+  neuralStayAlignedCorrectionStrength: number;
+  neuralStayAlignedMaxCorrectionRateDegPerSec: number;
+  neuralStayAlignedConfidenceThreshold: number;
+  neuralStayAlignedMotionProtection: number;
+  neuralStayAlignedHistorySamples: number;
+  neuralStayAlignedSampleRateHz: number;
+  neuralStayAlignedLearningRate: number;
+  neuralStayAlignedMinimumResetIntervalSeconds: number;
+  neuralStayAlignedMaxResetSupervisionDeg: number;
   trackers: Record<TrackerRetargetRole, TrackerRetargetAdjustment>;
   springBones: Record<TrackerRetargetRole, TrackerSpringBoneAdjustment>;
   boneComplianceSegments: Record<
     BoneComplianceSegmentKey,
     BoneComplianceSegmentAdjustment
   >;
+};
+
+export type NeuralStayAlignedDeviceStatus = {
+  deviceKey: string;
+  trackerName: string;
+  bodyPosition: string;
+  samplesSeen: number;
+  historySize: number;
+  supervisionEvents: number;
+  predictedRateDegPerSec: number;
+  appliedRateDegPerSec: number;
+  confidence: number;
+  lastResetCorrectionDeg: number;
+  lastTrainingTargetDeg: number;
+  lastLoss: number;
+};
+
+export type NeuralStayAlignedRuntimeStatus = {
+  deviceCount: number;
+  totalSamples: number;
+  totalSupervisionEvents: number;
+  devices: NeuralStayAlignedDeviceStatus[];
+};
+
+export const EMPTY_NEURAL_STAY_ALIGNED_STATUS: NeuralStayAlignedRuntimeStatus = {
+  deviceCount: 0,
+  totalSamples: 0,
+  totalSupervisionEvents: 0,
+  devices: [],
 };
 
 export const RETARGET_ROLE_BODY_PART: Record<TrackerRetargetRole, BodyPart> = {
@@ -179,6 +220,18 @@ export const makeDefaultTrackerRetargetConfig = (): TrackerRetargetConfig => ({
   boneComplianceOverall: 0.5,
   boneCompliancePreserveTorsoLength: true,
   boneComplianceResponse: 0.5,
+  neuralStayAlignedEnabled: false,
+  neuralStayAlignedLearnFromYawResets: true,
+  neuralStayAlignedApplyCorrections: false,
+  neuralStayAlignedCorrectionStrength: 0.5,
+  neuralStayAlignedMaxCorrectionRateDegPerSec: 0.35,
+  neuralStayAlignedConfidenceThreshold: 0.65,
+  neuralStayAlignedMotionProtection: 0.85,
+  neuralStayAlignedHistorySamples: 1500,
+  neuralStayAlignedSampleRateHz: 20,
+  neuralStayAlignedLearningRate: 0.0005,
+  neuralStayAlignedMinimumResetIntervalSeconds: 15,
+  neuralStayAlignedMaxResetSupervisionDeg: 45,
   trackers: Object.fromEntries(
     RETARGET_ROLES.map((role) => [role, defaultAdjustment()])
   ) as Record<TrackerRetargetRole, TrackerRetargetAdjustment>,
@@ -210,12 +263,71 @@ type TrackerRetargetMessage = Omit<
       Partial<BoneComplianceSegmentAdjustment>
     >
   >;
+  neuralStayAlignedStatus?: Partial<NeuralStayAlignedRuntimeStatus> & {
+    devices?: Partial<NeuralStayAlignedDeviceStatus>[];
+  };
 };
 
 export type TrackerRetargetSyncState = 'loading' | 'saving' | 'synced';
 
 function finiteNumber(value: unknown, fallback: number) {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function normalizeNeuralStayAlignedStatus(
+  message: TrackerRetargetMessage
+): NeuralStayAlignedRuntimeStatus {
+  const status = message.neuralStayAlignedStatus;
+  if (!status) return EMPTY_NEURAL_STAY_ALIGNED_STATUS;
+
+  const devices = Array.isArray(status.devices)
+    ? status.devices.map((device) => ({
+        deviceKey:
+          typeof device.deviceKey === 'string' ? device.deviceKey : 'unknown',
+        trackerName:
+          typeof device.trackerName === 'string'
+            ? device.trackerName
+            : 'Unknown tracker',
+        bodyPosition:
+          typeof device.bodyPosition === 'string'
+            ? device.bodyPosition
+            : 'UNASSIGNED',
+        samplesSeen: Math.max(0, finiteNumber(device.samplesSeen, 0)),
+        historySize: Math.max(0, finiteNumber(device.historySize, 0)),
+        supervisionEvents: Math.max(
+          0,
+          finiteNumber(device.supervisionEvents, 0)
+        ),
+        predictedRateDegPerSec: finiteNumber(
+          device.predictedRateDegPerSec,
+          0
+        ),
+        appliedRateDegPerSec: finiteNumber(device.appliedRateDegPerSec, 0),
+        confidence: Math.min(
+          1,
+          Math.max(0, finiteNumber(device.confidence, 0))
+        ),
+        lastResetCorrectionDeg: finiteNumber(
+          device.lastResetCorrectionDeg,
+          0
+        ),
+        lastTrainingTargetDeg: finiteNumber(
+          device.lastTrainingTargetDeg,
+          0
+        ),
+        lastLoss: Math.max(0, finiteNumber(device.lastLoss, 0)),
+      }))
+    : [];
+
+  return {
+    deviceCount: Math.max(0, finiteNumber(status.deviceCount, devices.length)),
+    totalSamples: Math.max(0, finiteNumber(status.totalSamples, 0)),
+    totalSupervisionEvents: Math.max(
+      0,
+      finiteNumber(status.totalSupervisionEvents, 0)
+    ),
+    devices,
+  };
 }
 
 export function normalizeTrackerRetargetConfig(
@@ -419,6 +531,110 @@ export function normalizeTrackerRetargetConfig(
         )
       )
     ),
+    neuralStayAlignedEnabled:
+      typeof message.neuralStayAlignedEnabled === 'boolean'
+        ? message.neuralStayAlignedEnabled
+        : defaults.neuralStayAlignedEnabled,
+    neuralStayAlignedLearnFromYawResets:
+      typeof message.neuralStayAlignedLearnFromYawResets === 'boolean'
+        ? message.neuralStayAlignedLearnFromYawResets
+        : defaults.neuralStayAlignedLearnFromYawResets,
+    neuralStayAlignedApplyCorrections:
+      typeof message.neuralStayAlignedApplyCorrections === 'boolean'
+        ? message.neuralStayAlignedApplyCorrections
+        : defaults.neuralStayAlignedApplyCorrections,
+    neuralStayAlignedCorrectionStrength: Math.min(
+      1,
+      Math.max(
+        0,
+        finiteNumber(
+          message.neuralStayAlignedCorrectionStrength,
+          defaults.neuralStayAlignedCorrectionStrength
+        )
+      )
+    ),
+    neuralStayAlignedMaxCorrectionRateDegPerSec: Math.min(
+      3,
+      Math.max(
+        0,
+        finiteNumber(
+          message.neuralStayAlignedMaxCorrectionRateDegPerSec,
+          defaults.neuralStayAlignedMaxCorrectionRateDegPerSec
+        )
+      )
+    ),
+    neuralStayAlignedConfidenceThreshold: Math.min(
+      1,
+      Math.max(
+        0,
+        finiteNumber(
+          message.neuralStayAlignedConfidenceThreshold,
+          defaults.neuralStayAlignedConfidenceThreshold
+        )
+      )
+    ),
+    neuralStayAlignedMotionProtection: Math.min(
+      1,
+      Math.max(
+        0,
+        finiteNumber(
+          message.neuralStayAlignedMotionProtection,
+          defaults.neuralStayAlignedMotionProtection
+        )
+      )
+    ),
+    neuralStayAlignedHistorySamples: Math.min(
+      5000,
+      Math.max(
+        100,
+        Math.round(
+          finiteNumber(
+            message.neuralStayAlignedHistorySamples,
+            defaults.neuralStayAlignedHistorySamples
+          )
+        )
+      )
+    ),
+    neuralStayAlignedSampleRateHz: Math.min(
+      60,
+      Math.max(
+        5,
+        finiteNumber(
+          message.neuralStayAlignedSampleRateHz,
+          defaults.neuralStayAlignedSampleRateHz
+        )
+      )
+    ),
+    neuralStayAlignedLearningRate: Math.min(
+      0.01,
+      Math.max(
+        0.000001,
+        finiteNumber(
+          message.neuralStayAlignedLearningRate,
+          defaults.neuralStayAlignedLearningRate
+        )
+      )
+    ),
+    neuralStayAlignedMinimumResetIntervalSeconds: Math.min(
+      600,
+      Math.max(
+        1,
+        finiteNumber(
+          message.neuralStayAlignedMinimumResetIntervalSeconds,
+          defaults.neuralStayAlignedMinimumResetIntervalSeconds
+        )
+      )
+    ),
+    neuralStayAlignedMaxResetSupervisionDeg: Math.min(
+      180,
+      Math.max(
+        1,
+        finiteNumber(
+          message.neuralStayAlignedMaxResetSupervisionDeg,
+          defaults.neuralStayAlignedMaxResetSupervisionDeg
+        )
+      )
+    ),
     trackers,
     springBones,
     boneComplianceSegments,
@@ -433,9 +649,14 @@ export function useTrackerRetargeting() {
   const [loaded, setLoaded] = useState(false);
   const [syncState, setSyncState] =
     useState<TrackerRetargetSyncState>('loading');
+  const [neuralStatus, setNeuralStatus] =
+    useState<NeuralStayAlignedRuntimeStatus>(
+      EMPTY_NEURAL_STAY_ALIGNED_STATUS
+    );
 
   useTextPacket<TrackerRetargetMessage>('retarget_config', (message) => {
     setConfig(normalizeTrackerRetargetConfig(message));
+    setNeuralStatus(normalizeNeuralStayAlignedStatus(message));
     setLoaded(true);
     setSyncState('synced');
   });
@@ -462,6 +683,29 @@ export function useTrackerRetargeting() {
       boneCompliancePreserveTorsoLength:
         normalized.boneCompliancePreserveTorsoLength,
       boneComplianceResponse: normalized.boneComplianceResponse,
+      neuralStayAlignedEnabled: normalized.neuralStayAlignedEnabled,
+      neuralStayAlignedLearnFromYawResets:
+        normalized.neuralStayAlignedLearnFromYawResets,
+      neuralStayAlignedApplyCorrections:
+        normalized.neuralStayAlignedApplyCorrections,
+      neuralStayAlignedCorrectionStrength:
+        normalized.neuralStayAlignedCorrectionStrength,
+      neuralStayAlignedMaxCorrectionRateDegPerSec:
+        normalized.neuralStayAlignedMaxCorrectionRateDegPerSec,
+      neuralStayAlignedConfidenceThreshold:
+        normalized.neuralStayAlignedConfidenceThreshold,
+      neuralStayAlignedMotionProtection:
+        normalized.neuralStayAlignedMotionProtection,
+      neuralStayAlignedHistorySamples:
+        normalized.neuralStayAlignedHistorySamples,
+      neuralStayAlignedSampleRateHz:
+        normalized.neuralStayAlignedSampleRateHz,
+      neuralStayAlignedLearningRate:
+        normalized.neuralStayAlignedLearningRate,
+      neuralStayAlignedMinimumResetIntervalSeconds:
+        normalized.neuralStayAlignedMinimumResetIntervalSeconds,
+      neuralStayAlignedMaxResetSupervisionDeg:
+        normalized.neuralStayAlignedMaxResetSupervisionDeg,
       trackers: normalized.trackers,
       springBones: normalized.springBones,
       boneComplianceSegments: normalized.boneComplianceSegments,
@@ -472,7 +716,12 @@ export function useTrackerRetargeting() {
     config,
     loaded,
     syncState,
+    neuralStatus,
     updateConfig,
+    clearNeuralLearning: () => {
+      setSyncState('loading');
+      sendTextPacket({ type: 'neural_stay_aligned_clear' });
+    },
     refresh: () => {
       setSyncState('loading');
       sendTextPacket({ type: 'retarget_get' });
