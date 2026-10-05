@@ -1,6 +1,7 @@
 package dev.slimevr.unit
 
 import dev.slimevr.config.BoneComplianceConfig
+import dev.slimevr.tracking.processor.skeleton.BoneComplianceGroundClosureInput
 import dev.slimevr.tracking.processor.skeleton.BoneComplianceProcessor
 import dev.slimevr.tracking.processor.skeleton.BoneComplianceSegmentInput
 import kotlin.math.abs
@@ -160,6 +161,185 @@ class BoneComplianceProcessorTests {
 		}.toFloat()
 
 		assertTrue(abs(netDelta) < 1e-4f)
+	}
+
+	@Test
+	fun groundClosureLowersCommonPlantedFootResidual() {
+		val processor = BoneComplianceProcessor()
+		val config = config().apply {
+			groundClosureEnabled = true
+			groundClosureStrength = 1f
+			groundClosureMaxCorrectionMeters = 0.05f
+			preserveTorsoLength = false
+		}
+		val key = BoneComplianceConfig.WAIST_TO_HIP
+		config.getSegment(key).apply {
+			compliance = 1f
+			compressionLimit = 0.05f
+			extensionLimit = 0.05f
+			sensorInfluence = 0f
+		}
+
+		val solved = processor.solve(
+			inputs = listOf(
+				BoneComplianceSegmentInput(
+					key = key,
+					restLength = 0.20f,
+					relativeRotationRadians = 0f,
+					relativeAccelerationY = null,
+					verticalLengthSensitivity = -1f,
+				),
+			),
+			config = config,
+			nowNanos = 1_000_000_000L,
+			groundClosure = BoneComplianceGroundClosureInput(
+				commonFootResidualMeters = 0.02f,
+				contactConfidence = 1f,
+				bilateralDisagreementMeters = 0f,
+			),
+		)
+
+		val strain = solved[key] ?: 0f
+		assertTrue(strain > 0f)
+
+		val predictedFootDelta = 0.20f * -1f * strain
+		assertTrue(predictedFootDelta < 0f)
+	}
+
+	@Test
+	fun groundClosureRejectsAsymmetricFeet() {
+		val processor = BoneComplianceProcessor()
+		val config = config().apply {
+			groundClosureEnabled = true
+			groundClosureStrength = 1f
+			groundClosureBilateralToleranceMeters = 0.02f
+			preserveTorsoLength = false
+		}
+		val key = BoneComplianceConfig.WAIST_TO_HIP
+		config.getSegment(key).apply {
+			compliance = 1f
+			compressionLimit = 0.05f
+			extensionLimit = 0.05f
+			sensorInfluence = 0f
+		}
+
+		val solved = processor.solve(
+			inputs = listOf(
+				BoneComplianceSegmentInput(
+					key = key,
+					restLength = 0.20f,
+					relativeRotationRadians = 0f,
+					relativeAccelerationY = null,
+					verticalLengthSensitivity = -1f,
+				),
+			),
+			config = config,
+			nowNanos = 1_000_000_000L,
+			groundClosure = BoneComplianceGroundClosureInput(
+				commonFootResidualMeters = 0.02f,
+				contactConfidence = 1f,
+				bilateralDisagreementMeters = 0.03f,
+			),
+		)
+
+		assertEquals(0f, solved[key])
+	}
+
+	@Test
+	fun groundClosureRespectsExtensionLimit() {
+		val processor = BoneComplianceProcessor()
+		val config = config().apply {
+			groundClosureEnabled = true
+			groundClosureStrength = 1f
+			groundClosureMaxCorrectionMeters = 0.10f
+			preserveTorsoLength = false
+		}
+		val key = BoneComplianceConfig.CHEST_TO_WAIST
+		val segment = config.getSegment(key).apply {
+			compliance = 1f
+			compressionLimit = 0.01f
+			extensionLimit = 0.015f
+			sensorInfluence = 0f
+		}
+
+		val solved = processor.solve(
+			inputs = listOf(
+				BoneComplianceSegmentInput(
+					key = key,
+					restLength = 0.15f,
+					relativeRotationRadians = 0f,
+					relativeAccelerationY = null,
+					verticalLengthSensitivity = -0.8f,
+				),
+			),
+			config = config,
+			nowNanos = 1_000_000_000L,
+			groundClosure = BoneComplianceGroundClosureInput(
+				commonFootResidualMeters = 0.10f,
+				contactConfidence = 1f,
+			),
+		)
+
+		assertTrue((solved[key] ?: 0f) <= segment.extensionLimit + 1e-5f)
+	}
+
+	@Test
+	fun groundClosureCanRedistributeWhilePreservingTorsoLength() {
+		val processor = BoneComplianceProcessor()
+		val config = config().apply {
+			groundClosureEnabled = true
+			groundClosureStrength = 1f
+			preserveTorsoLength = true
+		}
+		for (key in BoneComplianceConfig.TORSO_SEGMENTS) {
+			config.getSegment(key).apply {
+				compliance = 1f
+				compressionLimit = 0.05f
+				extensionLimit = 0.05f
+				sensorInfluence = 0f
+			}
+		}
+
+		val inputs = listOf(
+			BoneComplianceSegmentInput(
+				BoneComplianceConfig.UPPER_CHEST_TO_CHEST,
+				0.15f,
+				0f,
+				null,
+				verticalLengthSensitivity = -0.10f,
+			),
+			BoneComplianceSegmentInput(
+				BoneComplianceConfig.CHEST_TO_WAIST,
+				0.16f,
+				0f,
+				null,
+				verticalLengthSensitivity = -0.45f,
+			),
+			BoneComplianceSegmentInput(
+				BoneComplianceConfig.WAIST_TO_HIP,
+				0.20f,
+				0f,
+				null,
+				verticalLengthSensitivity = -0.90f,
+			),
+		)
+
+		val solved = processor.solve(
+			inputs = inputs,
+			config = config,
+			nowNanos = 1_000_000_000L,
+			groundClosure = BoneComplianceGroundClosureInput(
+				commonFootResidualMeters = 0.02f,
+				contactConfidence = 1f,
+			),
+		)
+
+		val netLengthDelta = inputs.sumOf {
+			(it.restLength * (solved[it.key] ?: 0f)).toDouble()
+		}.toFloat()
+
+		assertTrue(abs(netLengthDelta) < 1e-4f)
+		assertTrue(solved.values.any { abs(it) > 1e-5f })
 	}
 
 	@Test
