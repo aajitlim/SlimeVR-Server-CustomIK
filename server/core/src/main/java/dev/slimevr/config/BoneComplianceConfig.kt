@@ -26,6 +26,35 @@ class BoneComplianceConfig {
 	 */
 	var response: Float = 0.5f
 
+	/**
+	 * Use planted-foot vertical closure as an additional physical constraint.
+	 * This is a non-oscillating servo inside the compliance solve.
+	 */
+	var groundClosureEnabled: Boolean = false
+
+	/**
+	 * Blend of the trusted planted-foot residual into the torso strain solve.
+	 */
+	var groundClosureStrength: Float = 0.65f
+
+	/**
+	 * Hard cap on how much vertical foot error Ground Closure may ask the torso
+	 * compliance solver to remove in one solve.
+	 */
+	var groundClosureMaxCorrectionMeters: Float = 0.04f
+
+	/**
+	 * When both feet are planted, suppress torso correction if their vertical
+	 * residuals disagree by more than this amount.
+	 */
+	var groundClosureBilateralToleranceMeters: Float = 0.025f
+
+	/**
+	 * Conservative default: require both feet to be planted before a torso-wide
+	 * ground closure correction is accepted.
+	 */
+	var groundClosureRequireBothFeet: Boolean = true
+
 	val segments: MutableMap<String, BoneComplianceSegmentConfig> = mutableMapOf(
 		UPPER_CHEST_TO_CHEST to BoneComplianceSegmentConfig(
 			enabled = true,
