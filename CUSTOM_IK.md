@@ -17,6 +17,432 @@ tracker point to the avatar's expected hip/knee/foot point should not bend or
 rotate SlimeVR's solved body to satisfy that game-space point.
 
 
+## Neural Stay Aligned — reset-supervised yaw adaptation
+
+This version adds a fourth **Custom IK** subtab:
+
+1. **Retargeting / Spine**
+2. **Spring Bones**
+3. **Bone Compliance**
+4. **Neural Stay Aligned**
+
+Neural Stay Aligned is a bounded online-learning layer for yaw drift.
+
+It does not predict a full tracker quaternion and it does not replace the normal
+SlimeVR body solve.
+
+Instead, it predicts a small **signed yaw correction rate** which can optionally
+be blended into the existing Stay Aligned yaw-correction state.
+
+The feature is split into two independent switches:
+
+- **Enable neural sampling / inference**
+- **Apply learned yaw corrections**
+
+This allows the model to collect data and learn from resets while its correction
+output remains completely passive.
+
+Correction application defaults to **off**.
+
+### Runtime position in the tracking stack
+
+The high-level flow is:
+
+```text
+physical tracker stream
+        |
+        +------------------------+
+        |                        |
+        v                        v
+normal SlimeVR             Neural Stay Aligned
+Stay Aligned               compact feature stream
+        |                        |
+        |                        v
+        |                  per-device GRU state
+        |                        |
+        |                  predicted yaw rate
+        |                        |
+        +-----------+------------+
+                    |
+                    v
+          bounded yaw correction
+                    |
+                    v
+             articulated spine
+                    |
+                    v
+             Bone Compliance
+                    |
+                    v
+        physical computed trackers
+                    |
+                    v
+              retargeting
+                    |
+                    v
+              Spring Bones
+                    |
+                    v
+                 SteamVR
+```
+
+Normal deterministic Stay Aligned is evaluated first.
+
+Neural Stay Aligned samples after that deterministic step so the neural feature
+packet can observe the current correction state.
+
+### Shared model, disconnected device state
+
+The network weights are shared between physical sensors so the model can learn
+general relationships such as hip/leg/torso yaw consistency.
+
+However, each physical device/sensor ID owns independent:
+
+- GRU hidden state,
+- compact history buffer,
+- learned output bias,
+- sample counter,
+- reset-supervision count,
+- prediction telemetry.
+
+The persistent runtime key is built from:
+
+```text
+physical hardware identifier + sensor ID
+```
+
+rather than body role.
+
+If the same physical sensor is reassigned from one body position to another,
+its learned device bias is retained but its temporal hidden/history state is
+cleared because the meaning of the cross-skeleton context changed.
+
+### Tiny GRU structure
+
+The first implementation uses a dependency-free GRU implemented directly in the
+server core.
+
+Current dimensions:
+
+```text
+input features: 32
+GRU hidden size: 16
+output: signed yaw correction rate
+```
+
+The network predicts:
+
+```text
+degrees / second
+```
+
+rather than absolute yaw.
+
+The model output is internally bounded to:
+
+```text
++/- 3 deg/s
+```
+
+before the much tighter user-configured runtime correction limit is applied.
+
+### Compact feature stream
+
+The retained training history does not store raw SlimeVR packets.
+
+Each neural sample stores only:
+
+```text
+32 float features
++ sample dt
+```
+
+The current feature packet contains:
+
+- current adjusted tracker quaternion,
+- tracker world/reference acceleration XYZ,
+- own yaw represented as sin/cos,
+- relative yaw to body center,
+- relative yaw to head,
+- relative yaw to the lower torso anchor,
+- relative yaw to left/right upper legs,
+- relative yaw to left/right lower legs,
+- relative yaw to left/right feet,
+- estimated tracker angular speed,
+- current Stay Aligned yaw correction,
+- rest/motion state,
+- packet loss,
+- normalized body-role identifier.
+
+Relative yaw is represented using sin/cos pairs rather than a raw degree value
+so the network does not see a discontinuity at +/-180 degrees.
+
+### Bounded history
+
+Each physical sensor owns a bounded compact history.
+
+Default settings:
+
+```text
+history samples: 1500
+sample rate:     20 Hz
+```
+
+which gives approximately:
+
+```text
+75 seconds
+```
+
+of retained temporal credit assignment per physical sensor.
+
+The history can be configured from:
+
+```text
+100 .. 5000 samples
+5 .. 60 Hz
+```
+
+When the ring buffer is full, the oldest compact sample is discarded.
+
+Raw sensor streams are not accumulated indefinitely.
+
+### Soft yaw resets as supervision
+
+A normal soft yaw reset is treated as a strong supervised event.
+
+Immediately before the reset changes the tracker's yaw reference, Neural Stay
+Aligned captures:
+
+```text
+signed reset correction =
+    desired reference yaw
+    -
+    current adjusted tracker yaw
+```
+
+wrapped to the normal yaw interval.
+
+That reset says:
+
+> Over the preceding motion history, this tracker accumulated approximately this
+> much remaining heading error.
+
+Full resets and mounting resets do **not** produce neural training labels because
+they change more than yaw drift. Those reset types simply discard the temporal
+history.
+
+### Reset-integral training objective
+
+The network does not assign the entire reset error to every historical frame.
+
+During training, the retained sequence is replayed through the GRU.
+
+The predicted correction over the window is:
+
+```text
+predicted reset correction =
+    sum(predicted_yaw_rate_t * dt_t)
+```
+
+The main reset loss compares that integrated prediction to the actual signed
+reset correction:
+
+```text
+error =
+    predicted integrated correction
+    -
+    reset supervision target
+```
+
+A Huber loss is used so moderate errors remain quadratic while unusually large
+reset events do not create extreme gradients.
+
+The update uses backpropagation through time across the retained compact feature
+sequence.
+
+This means the reset applies gradient pressure back into the earlier states that
+actually contributed to the prediction instead of manually dividing one reset
+angle equally across every sample.
+
+### Bounded long-reset approximation
+
+A user may go longer between resets than the configured retained history.
+
+In that case, the model does not pretend discarded samples still exist.
+
+The reset target applied to the retained window is scaled by:
+
+```text
+retained_history_duration
+-------------------------
+full_reset_interval
+```
+
+with a small lower bound.
+
+This is intentionally a first bounded-memory approximation. A later version can
+replace it with chunk-level recurrent credit summaries or eligibility traces
+without changing the reset-supervision interface.
+
+### Per-device adapter
+
+In addition to the shared GRU weights, each physical sensor has a small learned
+output bias.
+
+This gives the shared network a way to learn general skeleton relationships
+while still adapting to a sensor whose individual yaw-drift behavior differs
+from the rest of the body.
+
+The per-device bias is updated by the same reset loss.
+
+### Confidence
+
+Correction confidence is deliberately conservative in the first version.
+
+Confidence increases only with successful reset-supervision events:
+
+```text
+confidence = 1 - exp(-reset_labels / 3)
+```
+
+and is capped below 100%.
+
+With the default minimum-confidence threshold, several useful reset events are
+required before learned correction can become active.
+
+Training can still run normally below the application threshold.
+
+### Hard non-neural correction safety
+
+The neural network never directly sets a quaternion.
+
+Its requested rate passes through a deterministic safety layer:
+
+```text
+GRU predicted rate
+        |
+        v
+correction-strength blend
+        |
+        v
+hard max deg/s clamp
+        |
+        v
+minimum-confidence gate
+        |
+        v
+intentional-motion suppression
+        |
+        v
+StayAligned yawCorrection
+```
+
+The default hard application limit is:
+
+```text
+0.35 deg/s
+```
+
+and learned correction application starts disabled.
+
+### Intentional-motion protection
+
+Fast user motion should not be interpreted as an opportunity to aggressively
+correct drift.
+
+The controller estimates tracker angular speed from successive compact samples.
+
+Correction begins to be progressively suppressed above approximately:
+
+```text
+45 deg/s
+```
+
+and reaches the configured maximum suppression near:
+
+```text
+180 deg/s
+```
+
+The **Intentional-motion protection** slider controls how strongly this gate
+reduces learned correction.
+
+This lets the model learn during active movement while discouraging visible
+mid-motion yaw manipulation.
+
+### Reset quality gates
+
+A reset becomes a training event only when it passes simple deterministic
+quality checks.
+
+The initial checks include:
+
+- Neural Stay Aligned enabled,
+- learning-from-yaw-resets enabled,
+- non-empty retained history,
+- reset interval above the configured minimum,
+- reset correction below the configured maximum supervision angle.
+
+Very short repeated resets and implausibly large correction events can therefore
+be rejected rather than becoming strong model updates.
+
+### Neural Stay Aligned UI
+
+The fourth Custom IK tab exposes:
+
+- enable neural sampling/inference,
+- learn from soft yaw resets,
+- apply learned yaw corrections,
+- correction strength,
+- hard maximum correction rate,
+- confidence threshold,
+- intentional-motion protection,
+- history sample count,
+- feature sample rate,
+- learning rate,
+- minimum reset interval,
+- maximum accepted reset supervision.
+
+The page also exposes runtime status for each physical device:
+
+- body position,
+- device/sensor key,
+- total samples seen,
+- current history size,
+- number of reset labels,
+- current predicted yaw-drift rate,
+- actually applied learned correction rate,
+- confidence,
+- last reset residual,
+- retained-window training target,
+- last training loss.
+
+This makes it possible to validate learning behavior before enabling correction.
+
+### Clearing neural state
+
+**Clear neural learning** resets:
+
+- shared GRU weights,
+- all per-device hidden states,
+- all compact histories,
+- all per-device learned biases,
+- neural sample/reset counters.
+
+It does not reset normal SlimeVR calibration or tracker mounting.
+
+### Persistence status
+
+In this first structure, neural model weights and per-device learned adapters are
+runtime-only.
+
+Server restart clears the learned model.
+
+This is intentional for initial validation: the online behavior, reset target
+sign, convergence, and correction safety should be verified before learned
+weights are serialized into the user's persistent SlimeVR configuration.
+
 ## Bone Compliance — physical torso strain solve
 
 This version adds a third **Custom IK** subtab:
@@ -399,7 +825,7 @@ influence the computed chest/hip and downstream limb root positions.
 Spring Bones remain export-only and cannot feed back into Bone Compliance or the
 physical skeleton.
 
-## Current custom version: articulated retargeting + Bone Compliance + Spring Bones
+## Current custom version: Neural Stay Aligned + Bone Compliance + Spring Bones + retargeting
 
 This version expands the original position-retargeting experiment into a broader
 **Custom IK** workspace for tuning how SlimeVR's solved body is exported and
@@ -411,6 +837,9 @@ The main additions in this version are:
 - independent articulated torso interpolation,
 - pelvis/floor-lift decoupling,
 - a visual tracker placement editor,
+- a reset-supervised **Neural Stay Aligned** GRU for learned yaw-drift adaptation,
+- per-device recurrent/history state with shared neural weights,
+- passive learning separated from bounded live correction application,
 - a new **Bone Compliance** physical torso strain solver,
 - relative-rotation plus differential-acceleration/jerk evidence for torso length interpolation,
 - simultaneous bounded strain solving with optional total torso length preservation,
@@ -421,14 +850,15 @@ The main additions in this version are:
 - persistent configuration over the existing SlimeVR websocket without changing
   the SolarXR binary protocol.
 
-The Custom IK UI is split into three subtabs:
+The Custom IK UI is split into four subtabs:
 
 1. **Retargeting / Spine**
 2. **Spring Bones**
 3. **Bone Compliance**
+4. **Neural Stay Aligned**
 
-These tabs intentionally solve different problems and own separate rendering
-lifecycles. Retargeting / Spine handles rotation distribution and virtual target
+These tabs intentionally solve different problems and own separate runtime
+responsibilities. Retargeting / Spine handles rotation distribution and virtual target
 placement, Bone Compliance refines the physical torso positions, and Spring
 Bones adds output-only secondary motion.
 
