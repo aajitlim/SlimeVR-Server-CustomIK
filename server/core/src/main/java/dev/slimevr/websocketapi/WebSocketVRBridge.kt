@@ -9,6 +9,7 @@ import dev.slimevr.bridge.Bridge
 import dev.slimevr.config.BoneComplianceConfig
 import dev.slimevr.config.TrackerPositionAdjustmentConfig
 import dev.slimevr.config.TrackerSpringBoneConfig
+import dev.slimevr.tracking.processor.stayaligned.neural.NeuralStayAlignedController
 import dev.slimevr.tracking.trackers.DeviceOrigin
 import dev.slimevr.tracking.trackers.Tracker
 import dev.slimevr.tracking.trackers.TrackerPosition
@@ -148,6 +149,12 @@ class WebSocketVRBridge(
 						return
 					}
 
+					"neural_stay_aligned_clear" -> {
+						NeuralStayAlignedController.clearLearning()
+						sendRetargetConfig(conn)
+						return
+					}
+
 					// TODO Ignore it for now, it should only register HMD in our test case with id 0
 					"config" -> {
 						LogManager.info("[WebSocket] Config received: $json")
@@ -261,6 +268,57 @@ class WebSocketVRBridge(
 			bridgeConfig.setTrackerSpringBone(role, current)
 		}
 
+		val neuralStayAligned =
+			server.configManager.vrConfig.neuralStayAligned
+		if (json.has("neuralStayAlignedEnabled")) {
+			neuralStayAligned.enabled =
+				json["neuralStayAlignedEnabled"].asBoolean()
+		}
+		if (json.has("neuralStayAlignedLearnFromYawResets")) {
+			neuralStayAligned.learnFromYawResets =
+				json["neuralStayAlignedLearnFromYawResets"].asBoolean()
+		}
+		if (json.has("neuralStayAlignedApplyCorrections")) {
+			neuralStayAligned.applyCorrections =
+				json["neuralStayAlignedApplyCorrections"].asBoolean()
+		}
+		if (json.has("neuralStayAlignedCorrectionStrength")) {
+			neuralStayAligned.correctionStrength =
+				json["neuralStayAlignedCorrectionStrength"].asDouble().toFloat().coerceIn(0f, 1f)
+		}
+		if (json.has("neuralStayAlignedMaxCorrectionRateDegPerSec")) {
+			neuralStayAligned.maxCorrectionRateDegPerSec =
+				json["neuralStayAlignedMaxCorrectionRateDegPerSec"].asDouble().toFloat().coerceIn(0f, 3f)
+		}
+		if (json.has("neuralStayAlignedConfidenceThreshold")) {
+			neuralStayAligned.confidenceThreshold =
+				json["neuralStayAlignedConfidenceThreshold"].asDouble().toFloat().coerceIn(0f, 1f)
+		}
+		if (json.has("neuralStayAlignedMotionProtection")) {
+			neuralStayAligned.motionProtection =
+				json["neuralStayAlignedMotionProtection"].asDouble().toFloat().coerceIn(0f, 1f)
+		}
+		if (json.has("neuralStayAlignedHistorySamples")) {
+			neuralStayAligned.historySamples =
+				json["neuralStayAlignedHistorySamples"].asInt().coerceIn(100, 5000)
+		}
+		if (json.has("neuralStayAlignedSampleRateHz")) {
+			neuralStayAligned.sampleRateHz =
+				json["neuralStayAlignedSampleRateHz"].asDouble().toFloat().coerceIn(5f, 60f)
+		}
+		if (json.has("neuralStayAlignedLearningRate")) {
+			neuralStayAligned.learningRate =
+				json["neuralStayAlignedLearningRate"].asDouble().toFloat().coerceIn(0.000001f, 0.01f)
+		}
+		if (json.has("neuralStayAlignedMinimumResetIntervalSeconds")) {
+			neuralStayAligned.minimumResetIntervalSeconds =
+				json["neuralStayAlignedMinimumResetIntervalSeconds"].asDouble().toFloat().coerceIn(1f, 600f)
+		}
+		if (json.has("neuralStayAlignedMaxResetSupervisionDeg")) {
+			neuralStayAligned.maxResetSupervisionDeg =
+				json["neuralStayAlignedMaxResetSupervisionDeg"].asDouble().toFloat().coerceIn(1f, 180f)
+		}
+
 		if (json.has("boneComplianceEnabled")) {
 			server.configManager.vrConfig.boneCompliance.enabled =
 				json["boneComplianceEnabled"].asBoolean()
@@ -334,6 +392,54 @@ class WebSocketVRBridge(
 			"springBonesUseAcceleration",
 			bridgeConfig.springBonesUseAcceleration,
 		)
+		val neuralStayAligned =
+			server.configManager.vrConfig.neuralStayAligned
+		response.put("neuralStayAlignedEnabled", neuralStayAligned.enabled)
+		response.put(
+			"neuralStayAlignedLearnFromYawResets",
+			neuralStayAligned.learnFromYawResets,
+		)
+		response.put(
+			"neuralStayAlignedApplyCorrections",
+			neuralStayAligned.applyCorrections,
+		)
+		response.put(
+			"neuralStayAlignedCorrectionStrength",
+			neuralStayAligned.correctionStrength,
+		)
+		response.put(
+			"neuralStayAlignedMaxCorrectionRateDegPerSec",
+			neuralStayAligned.maxCorrectionRateDegPerSec,
+		)
+		response.put(
+			"neuralStayAlignedConfidenceThreshold",
+			neuralStayAligned.confidenceThreshold,
+		)
+		response.put(
+			"neuralStayAlignedMotionProtection",
+			neuralStayAligned.motionProtection,
+		)
+		response.put(
+			"neuralStayAlignedHistorySamples",
+			neuralStayAligned.historySamples,
+		)
+		response.put(
+			"neuralStayAlignedSampleRateHz",
+			neuralStayAligned.sampleRateHz,
+		)
+		response.put(
+			"neuralStayAlignedLearningRate",
+			neuralStayAligned.learningRate,
+		)
+		response.put(
+			"neuralStayAlignedMinimumResetIntervalSeconds",
+			neuralStayAligned.minimumResetIntervalSeconds,
+		)
+		response.put(
+			"neuralStayAlignedMaxResetSupervisionDeg",
+			neuralStayAligned.maxResetSupervisionDeg,
+		)
+
 		response.put(
 			"boneComplianceEnabled",
 			server.configManager.vrConfig.boneCompliance.enabled,
@@ -408,6 +514,49 @@ class WebSocketVRBridge(
 			boneComplianceSegments.set<ObjectNode>(segmentKey, segmentNode)
 		}
 		response.set<ObjectNode>("boneComplianceSegments", boneComplianceSegments)
+
+		val neuralStatus = NeuralStayAlignedController.status()
+		val neuralStatusNode = mapper.nodeFactory.objectNode()
+		neuralStatusNode.put("deviceCount", neuralStatus.deviceCount)
+		neuralStatusNode.put("totalSamples", neuralStatus.totalSamples)
+		neuralStatusNode.put(
+			"totalSupervisionEvents",
+			neuralStatus.totalSupervisionEvents,
+		)
+		val neuralDevices = mapper.nodeFactory.arrayNode()
+		for (device in neuralStatus.devices) {
+			val deviceNode = mapper.nodeFactory.objectNode()
+			deviceNode.put("deviceKey", device.deviceKey)
+			deviceNode.put("trackerName", device.trackerName)
+			deviceNode.put("bodyPosition", device.bodyPosition)
+			deviceNode.put("samplesSeen", device.samplesSeen)
+			deviceNode.put("historySize", device.historySize)
+			deviceNode.put("supervisionEvents", device.supervisionEvents)
+			deviceNode.put(
+				"predictedRateDegPerSec",
+				device.predictedRateDegPerSec,
+			)
+			deviceNode.put(
+				"appliedRateDegPerSec",
+				device.appliedRateDegPerSec,
+			)
+			deviceNode.put("confidence", device.confidence)
+			deviceNode.put(
+				"lastResetCorrectionDeg",
+				device.lastResetCorrectionDeg,
+			)
+			deviceNode.put(
+				"lastTrainingTargetDeg",
+				device.lastTrainingTargetDeg,
+			)
+			deviceNode.put("lastLoss", device.lastLoss)
+			neuralDevices.add(deviceNode)
+		}
+		neuralStatusNode.set(
+			"devices",
+			neuralDevices,
+		)
+		response.set<ObjectNode>("neuralStayAlignedStatus", neuralStatusNode)
 
 		conn.send(response.toString())
 	}
