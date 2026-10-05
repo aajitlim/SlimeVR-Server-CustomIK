@@ -11,6 +11,7 @@ import {
 import { SkeletonVisualizerWidget } from '@/components/widgets/SkeletonVisualizerWidget';
 import { SpringBonesSettings } from '@/components/settings/pages/SpringBonesSettings';
 import { BoneComplianceSettings } from '@/components/settings/pages/BoneComplianceSettings';
+import { NeuralStayAlignedSettings } from '@/components/settings/pages/NeuralStayAlignedSettings';
 import {
   makeDefaultTrackerRetargetConfig,
   RETARGET_ROLES,
@@ -122,12 +123,19 @@ function SyncStatus({
 }
 
 export function TrackerRetargetingSettings() {
-  const { config, loaded, syncState, updateConfig, refresh } =
-    useTrackerRetargeting();
+  const {
+    config,
+    loaded,
+    syncState,
+    neuralStatus,
+    updateConfig,
+    clearNeuralLearning,
+    refresh,
+  } = useTrackerRetargeting();
   const [selectedRole, setSelectedRole] =
     useState<TrackerRetargetRole>('waist');
   const [activeSubtab, setActiveSubtab] = useState<
-    'retargeting' | 'spring_bones' | 'bone_compliance'
+    'retargeting' | 'spring_bones' | 'bone_compliance' | 'neural_stay_aligned'
   >('retargeting');
   const [showSpineNodes, setShowSpineNodes] = useState(true);
   const [showSourceTargets, setShowSourceTargets] = useState(true);
@@ -197,8 +205,9 @@ export function TrackerRetargetingSettings() {
           <Typography variant="main-title">Custom IK</Typography>
           <Typography color="secondary">
             Tune articulated spine behavior, bounded physical torso compliance,
-            independent game-space tracker placement, and secondary spring
-            motion without changing the physical tracker rotations.
+            learned yaw-drift adaptation, independent game-space tracker
+            placement, and secondary spring motion while keeping each layer
+            explicitly bounded.
           </Typography>
           <div className="flex flex-wrap items-center gap-3">
             <SyncStatus loaded={loaded} syncState={syncState} />
@@ -207,7 +216,7 @@ export function TrackerRetargetingSettings() {
             </Button>
           </div>
 
-          <div className="grid sm:grid-cols-3 gap-2 mt-2">
+          <div className="grid sm:grid-cols-2 xl:grid-cols-4 gap-2 mt-2">
             <Button
               variant={activeSubtab === 'retargeting' ? 'tertiary' : 'secondary'}
               onClick={() => setActiveSubtab('retargeting')}
@@ -227,6 +236,16 @@ export function TrackerRetargetingSettings() {
               onClick={() => setActiveSubtab('bone_compliance')}
             >
               Bone Compliance
+            </Button>
+            <Button
+              variant={
+                activeSubtab === 'neural_stay_aligned'
+                  ? 'tertiary'
+                  : 'secondary'
+              }
+              onClick={() => setActiveSubtab('neural_stay_aligned')}
+            >
+              Neural Stay Aligned
             </Button>
           </div>
         </div>
@@ -663,6 +682,16 @@ export function TrackerRetargetingSettings() {
           <BoneComplianceSettings
             config={config}
             updateConfig={updateConfig}
+          />
+        )}
+
+        {activeSubtab === 'neural_stay_aligned' && (
+          <NeuralStayAlignedSettings
+            config={config}
+            status={neuralStatus}
+            updateConfig={updateConfig}
+            refresh={refresh}
+            clearLearning={clearNeuralLearning}
           />
         )}
       </SettingsPagePaneLayout>
