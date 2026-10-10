@@ -284,14 +284,16 @@ object NeuralStayAlignedController {
 
 			// Both independent models use the same trusted reset angle, but
 			// train separate weights. No reset correction is double-added.
-			val hardwareDuration = state.hardware.historyDurationSeconds
+			val hardwareSamples = state.hardware.historicalRawEquivalentSamples
+			val skeletonSamples = state.history.rawEquivalentSamples
 			if (config.hardwareLearningEnabled &&
-				state.hardware.historicalRawEquivalentSamples > 0L &&
-				hardwareDuration >= intervalSeconds - 2f / config.sampleRateHz.coerceAtLeast(1f)
+				hardwareSamples > 0L &&
+				hardwareSamples >= skeletonSamples - 1L
 			) {
-				// Reject partial-window labels: if the hardware stage was only
-				// enabled midway, the reset angle covers time it never observed.
-				// We do not invent the missing part of the history.
+				// These branches are observed on the same scheduler pass.
+				// Exact interval sample coverage (allowing one startup frame)
+				// avoids assigning a full reset label to hardware training
+				// that was enabled partway through the interval.
 				state.hardware.learnFromReset(
 					targetCorrectionDeg = correctionDeg,
 					learningRate = config.learningRate,
