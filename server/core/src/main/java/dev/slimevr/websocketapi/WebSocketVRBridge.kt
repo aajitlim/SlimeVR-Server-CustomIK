@@ -628,6 +628,7 @@ class WebSocketVRBridge(
 				device.lastTrainingTargetDeg,
 			)
 			deviceNode.put("lastLoss", device.lastLoss)
+			deviceNode.put("lastTrainingMilliseconds", device.lastTrainingMilliseconds)
 			deviceNode.put("hardwareSamplesSeen", device.hardwareSamplesSeen)
 			deviceNode.put("hardwareHistorySize", device.hardwareHistorySize)
 			deviceNode.put("hardwareRawEquivalentSamples", device.hardwareRawEquivalentSamples)
@@ -640,6 +641,10 @@ class WebSocketVRBridge(
 				device.hardwarePredictedRateDegPerSec,
 			)
 			deviceNode.put("hardwareLastLoss", device.hardwareLastLoss)
+			deviceNode.put(
+				"hardwareLastTrainingMilliseconds",
+				device.hardwareLastTrainingMilliseconds,
+			)
 			deviceNode.put("hardwareLastErrorDeg", device.hardwareLastErrorDeg)
 			deviceNode.put("hardwareConfidence", device.hardwareConfidence)
 			if (device.hardwareTemperatureCelsius != null) {
