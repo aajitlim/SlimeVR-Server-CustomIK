@@ -53,6 +53,9 @@ class HardwareYawDriftEstimator {
 
     val historySize: Int get() = history.size
 
+    /** Test/diagnostic snapshot; caller cannot mutate the retained history. */
+    fun latestFeatureVector(): FloatArray? = history.peekLast()?.features?.copyOf()
+
     val confidence: Float
         get() = (1.0 - exp(-resetLabels.toDouble() / 3.0))
             .toFloat().coerceIn(0f, 0.95f)
@@ -197,5 +200,20 @@ class HardwareYawDriftEstimator {
 
     companion object {
         const val FEATURE_COUNT = 16
+    }
+}
+
+
+/** Convex-rate fusion avoids accidentally adding two full drift estimates. */
+internal object HardwareYawFusion {
+    fun blend(
+        skeletonRate: Float,
+        hardwareRate: Float,
+        maximumBlend: Float,
+        hardwareMaturity: Float,
+    ): Float {
+        val alpha = maximumBlend.coerceIn(0f, 1f) *
+            hardwareMaturity.coerceIn(0f, 1f)
+        return (1f - alpha) * skeletonRate + alpha * hardwareRate
     }
 }
