@@ -3,7 +3,6 @@ package dev.slimevr.tracking.processor.stayaligned.neural
 import io.github.axisangles.ktmath.EulerOrder
 import io.github.axisangles.ktmath.Quaternion
 import io.github.axisangles.ktmath.Vector3
-import java.util.ArrayDeque
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
@@ -22,12 +21,14 @@ import kotlin.math.sqrt
 class HardwareYawDriftEstimator {
     private val network = NeuralYawGruModel(
         inputSize = FEATURE_COUNT,
-        hiddenSize = 12,
+        hiddenSize = 24,
     )
     private var hidden = network.newHidden()
-    private val history = ArrayDeque<NeuralYawSequenceSample>()
-    var historyDurationSeconds: Float = 0f
-        private set
+    private val history = MultiScaleYawHistory(FEATURE_COUNT)
+    val historyDurationSeconds: Float get() = history.durationSeconds
+    val historicalRawEquivalentSamples: Long get() = history.rawEquivalentSamples
+    val compressedHistoryCapsules: Int get() = history.archivedCapsules
+    val replayTokens: Int get() = history.replayTokens
     private var bias = 0f
     private var previousYaw: Float? = null
     private var previousAccelMagnitude: Float? = null
@@ -53,10 +54,10 @@ class HardwareYawDriftEstimator {
     var samplesSeen: Long = 0
         private set
 
-    val historySize: Int get() = history.size
+    val historySize: Int get() = history.detailedSamples
 
     /** Test/diagnostic snapshot; caller cannot mutate the retained history. */
-    fun latestFeatureVector(): FloatArray? = history.peekLast()?.features?.copyOf()
+    fun latestFeatureVector(): FloatArray? = history.trainingSequence().lastOrNull()?.features?.copyOf()
 
     val confidence: Float
         get() = (1.0 - exp(-resetLabels.toDouble() / 3.0))
@@ -69,6 +70,8 @@ class HardwareYawDriftEstimator {
         dtSeconds: Float,
         historyLimit: Int,
         temperatureUpdateNanos: Long = 0L,
+        chunkSize: Int = 64,
+        recentSamples: Int = 1024,
     ): Float {
         val dt = dtSeconds.coerceIn(1f / 120f, 0.25f)
         val features = featuresFor(
@@ -77,11 +80,12 @@ class HardwareYawDriftEstimator {
         val prediction = network.predict(features, hidden, bias)
         hidden = prediction.hidden
         predictedRateDegPerSec = prediction.rateDegPerSec
-        history.addLast(NeuralYawSequenceSample(features, dt))
-        historyDurationSeconds += dt
-        while (history.size > historyLimit.coerceIn(100, 5000)) {
-            historyDurationSeconds -= history.removeFirst().dtSeconds
-        }
+        history.add(
+            NeuralYawSequenceSample(features, dt),
+            historyLimit,
+            chunkSize,
+            recentSamples,
+        )
         samplesSeen++
         return predictedRateDegPerSec
     }
@@ -91,13 +95,18 @@ class HardwareYawDriftEstimator {
      * This is a separate model from the multi-limb GRU; both use the same
      * reset event but neither one's gradients are written to the other.
      */
-    fun learnFromReset(targetCorrectionDeg: Float, learningRate: Float) {
-        if (history.isEmpty() || !targetCorrectionDeg.isFinite()) return
+    fun learnFromReset(
+        targetCorrectionDeg: Float,
+        learningRate: Float,
+        chunkSize: Int = 64,
+    ) {
+        if (history.isEmpty || !targetCorrectionDeg.isFinite()) return
         val result = network.trainSequence(
-            samples = history.toList(),
+            samples = history.trainingSequence(),
             targetCorrectionDeg = targetCorrectionDeg,
             learningRate = learningRate,
             deviceBias = bias,
+            chunkSize = chunkSize,
         )
         bias = result.deviceBias
         resetLabels++
@@ -110,7 +119,6 @@ class HardwareYawDriftEstimator {
     fun resetTemporal() {
         hidden = network.newHidden()
         history.clear()
-        historyDurationSeconds = 0f
         previousYaw = null
         previousAccelMagnitude = null
         previousTemperature = null
