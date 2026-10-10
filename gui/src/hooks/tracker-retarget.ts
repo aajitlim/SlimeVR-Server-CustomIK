@@ -88,6 +88,8 @@ export type TrackerRetargetConfig = {
   neuralStayAlignedConfidenceThreshold: number;
   neuralStayAlignedMotionProtection: number;
   neuralStayAlignedHistorySamples: number;
+  neuralRecentDetailedSamples: number;
+  neuralHistoryChunkSize: number;
   neuralStayAlignedSampleRateHz: number;
   neuralStayAlignedLearningRate: number;
   neuralStayAlignedMinimumResetIntervalSeconds: number;
@@ -110,6 +112,10 @@ export type NeuralStayAlignedDeviceStatus = {
   bodyPosition: string;
   samplesSeen: number;
   historySize: number;
+  historyRawEquivalentSamples: number;
+  historyCompressedCapsules: number;
+  historyReplayTokens: number;
+  historySeconds: number;
   supervisionEvents: number;
   predictedRateDegPerSec: number;
   appliedRateDegPerSec: number;
@@ -119,6 +125,10 @@ export type NeuralStayAlignedDeviceStatus = {
   lastLoss: number;
   hardwareSamplesSeen: number;
   hardwareHistorySize: number;
+  hardwareRawEquivalentSamples: number;
+  hardwareCompressedCapsules: number;
+  hardwareReplayTokens: number;
+  hardwareHistorySeconds: number;
   hardwareResetLabels: number;
   hardwarePredictedRateDegPerSec: number;
   hardwareLastLoss: number;
@@ -251,7 +261,9 @@ export const makeDefaultTrackerRetargetConfig = (): TrackerRetargetConfig => ({
   neuralStayAlignedMaxCorrectionRateDegPerSec: 0.35,
   neuralStayAlignedConfidenceThreshold: 0.65,
   neuralStayAlignedMotionProtection: 0.85,
-  neuralStayAlignedHistorySamples: 1500,
+  neuralStayAlignedHistorySamples: 50000,
+  neuralRecentDetailedSamples: 1024,
+  neuralHistoryChunkSize: 64,
   neuralStayAlignedSampleRateHz: 20,
   neuralStayAlignedLearningRate: 0.0005,
   neuralStayAlignedMinimumResetIntervalSeconds: 15,
@@ -322,6 +334,10 @@ function normalizeNeuralStayAlignedStatus(
             : 'UNASSIGNED',
         samplesSeen: Math.max(0, finiteNumber(device.samplesSeen, 0)),
         historySize: Math.max(0, finiteNumber(device.historySize, 0)),
+        historyRawEquivalentSamples: Math.max(0, finiteNumber(device.historyRawEquivalentSamples, 0)),
+        historyCompressedCapsules: Math.max(0, finiteNumber(device.historyCompressedCapsules, 0)),
+        historyReplayTokens: Math.max(0, finiteNumber(device.historyReplayTokens, 0)),
+        historySeconds: Math.max(0, finiteNumber(device.historySeconds, 0)),
         supervisionEvents: Math.max(
           0,
           finiteNumber(device.supervisionEvents, 0)
@@ -351,6 +367,22 @@ function normalizeNeuralStayAlignedStatus(
         hardwareHistorySize: Math.max(
           0,
           finiteNumber(device.hardwareHistorySize, 0)
+        ),
+        hardwareRawEquivalentSamples: Math.max(
+          0,
+          finiteNumber(device.hardwareRawEquivalentSamples, 0)
+        ),
+        hardwareCompressedCapsules: Math.max(
+          0,
+          finiteNumber(device.hardwareCompressedCapsules, 0)
+        ),
+        hardwareReplayTokens: Math.max(
+          0,
+          finiteNumber(device.hardwareReplayTokens, 0)
+        ),
+        hardwareHistorySeconds: Math.max(
+          0,
+          finiteNumber(device.hardwareHistorySeconds, 0)
         ),
         hardwareResetLabels: Math.max(
           0,
@@ -688,7 +720,7 @@ export function normalizeTrackerRetargetConfig(
       )
     ),
     neuralStayAlignedHistorySamples: Math.min(
-      5000,
+      50000,
       Math.max(
         100,
         Math.round(
@@ -699,6 +731,17 @@ export function normalizeTrackerRetargetConfig(
         )
       )
     ),
+    neuralRecentDetailedSamples: Math.min(
+      4096,
+      Math.max(32, Math.round(finiteNumber(
+        message.neuralRecentDetailedSamples,
+        defaults.neuralRecentDetailedSamples
+      )))
+    ),
+    neuralHistoryChunkSize:
+      finiteNumber(message.neuralHistoryChunkSize, defaults.neuralHistoryChunkSize) <= 32
+        ? 32
+        : 64,
     neuralStayAlignedSampleRateHz: Math.min(
       60,
       Math.max(
@@ -837,6 +880,8 @@ export function useTrackerRetargeting() {
         normalized.neuralStayAlignedMotionProtection,
       neuralStayAlignedHistorySamples:
         normalized.neuralStayAlignedHistorySamples,
+      neuralRecentDetailedSamples: normalized.neuralRecentDetailedSamples,
+      neuralHistoryChunkSize: normalized.neuralHistoryChunkSize,
       neuralStayAlignedSampleRateHz:
         normalized.neuralStayAlignedSampleRateHz,
       neuralStayAlignedLearningRate:
