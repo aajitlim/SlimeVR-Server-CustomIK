@@ -300,7 +300,15 @@ class WebSocketVRBridge(
 		}
 		if (json.has("neuralStayAlignedHistorySamples")) {
 			neuralStayAligned.historySamples =
-				json["neuralStayAlignedHistorySamples"].asInt().coerceIn(100, 5000)
+				json["neuralStayAlignedHistorySamples"].asInt().coerceIn(100, 50_000)
+		}
+		if (json.has("neuralRecentDetailedSamples")) {
+			neuralStayAligned.recentDetailedSamples =
+				json["neuralRecentDetailedSamples"].asInt().coerceIn(32, 4096)
+		}
+		if (json.has("neuralHistoryChunkSize")) {
+			neuralStayAligned.historyChunkSize =
+				if (json["neuralHistoryChunkSize"].asInt() <= 32) 32 else 64
 		}
 		if (json.has("neuralStayAlignedSampleRateHz")) {
 			neuralStayAligned.sampleRateHz =
@@ -464,6 +472,8 @@ class WebSocketVRBridge(
 			"neuralStayAlignedSampleRateHz",
 			neuralStayAligned.sampleRateHz,
 		)
+		response.put("neuralRecentDetailedSamples", neuralStayAligned.recentDetailedSamples)
+		response.put("neuralHistoryChunkSize", neuralStayAligned.historyChunkSize)
 		response.put(
 			"neuralStayAlignedLearningRate",
 			neuralStayAligned.learningRate,
@@ -595,6 +605,10 @@ class WebSocketVRBridge(
 			deviceNode.put("bodyPosition", device.bodyPosition)
 			deviceNode.put("samplesSeen", device.samplesSeen)
 			deviceNode.put("historySize", device.historySize)
+			deviceNode.put("historyRawEquivalentSamples", device.historyRawEquivalentSamples)
+			deviceNode.put("historyCompressedCapsules", device.historyCompressedCapsules)
+			deviceNode.put("historyReplayTokens", device.historyReplayTokens)
+			deviceNode.put("historySeconds", device.historySeconds)
 			deviceNode.put("supervisionEvents", device.supervisionEvents)
 			deviceNode.put(
 				"predictedRateDegPerSec",
@@ -616,6 +630,10 @@ class WebSocketVRBridge(
 			deviceNode.put("lastLoss", device.lastLoss)
 			deviceNode.put("hardwareSamplesSeen", device.hardwareSamplesSeen)
 			deviceNode.put("hardwareHistorySize", device.hardwareHistorySize)
+			deviceNode.put("hardwareRawEquivalentSamples", device.hardwareRawEquivalentSamples)
+			deviceNode.put("hardwareCompressedCapsules", device.hardwareCompressedCapsules)
+			deviceNode.put("hardwareReplayTokens", device.hardwareReplayTokens)
+			deviceNode.put("hardwareHistorySeconds", device.hardwareHistorySeconds)
 			deviceNode.put("hardwareResetLabels", device.hardwareResetLabels)
 			deviceNode.put(
 				"hardwarePredictedRateDegPerSec",
