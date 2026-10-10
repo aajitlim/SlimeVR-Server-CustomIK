@@ -56,4 +56,22 @@ class NeuralStayAlignedConfig {
 	 * Reject implausibly large reset supervision events.
 	 */
 	var maxResetSupervisionDeg: Float = 45f
+
+	/**
+	 * Independently train one tiny GRU per hardware sensor from its OWN rotation,
+	 * acceleration, and fresh temperature only. No skeleton context is used.
+	 */
+	var hardwareLearningEnabled: Boolean = false
+
+	/**
+	 * Optional convex fusion with the existing cross-skeleton neural model.
+	 * Never adds the two full drift rates on top of one another.
+	 */
+	var hardwareFusionEnabled: Boolean = false
+
+	/** Maximum local-hardware contribution to the blended requested yaw rate. */
+	var hardwareBlend: Float = 0.25f
+
+	/** Temperature older than this is masked as unavailable. */
+	var hardwareTemperatureMaxAgeSeconds: Float = 90f
 }
