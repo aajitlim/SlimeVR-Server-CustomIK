@@ -36,11 +36,17 @@ class VRConfig {
 
 	val legTweaks: LegTweaksConfig = LegTweaksConfig()
 
+	val spineArticulation: SpineArticulationConfig = SpineArticulationConfig()
+
+	val boneCompliance: BoneComplianceConfig = BoneComplianceConfig()
+
 	val tapDetection: TapDetectionConfig = TapDetectionConfig()
 
 	val resetsConfig: ResetsConfig = ResetsConfig()
 
 	val stayAlignedConfig = StayAlignedConfig()
+
+	val neuralStayAligned = NeuralStayAlignedConfig()
 
 	val hidConfig = HIDConfig()
 

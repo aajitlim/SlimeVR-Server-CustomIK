@@ -8,28 +8,49 @@ import {
 } from '@/utils/skeletonHelper';
 import {
   Bone,
+  BufferGeometry,
+  CylinderGeometry,
+  DoubleSide,
   GridHelper,
   Group,
+  Line,
+  LineBasicMaterial,
+  Mesh,
+  MeshBasicMaterial,
   PerspectiveCamera,
   Quaternion,
   Scene,
+  SphereGeometry,
   Vector2,
   Vector3,
   WebGLRenderer,
 } from 'three';
-import { BodyPart, BoneT } from 'solarxr-protocol';
+import { BodyPart, BoneT, TrackerDataT } from 'solarxr-protocol';
 import { QuaternionFromQuatT, isIdentity } from '@/maths/quaternion';
 import classNames from 'classnames';
 import { useLocalization } from '@fluent/react';
 import { ErrorBoundary } from 'react-error-boundary';
 import { Typography } from '@/components/commons/Typography';
 import { useAtomValue } from 'jotai';
-import { bonesAtom } from '@/store/app-store';
+import { bonesAtom, computedTrackersAtom } from '@/store/app-store';
 import { useConfig } from '@/hooks/config';
 import { Tween } from '@tweenjs/tween.js';
 import { EyeIcon } from '@/components/commons/icon/EyeIcon';
+import {
+  RETARGET_ROLES,
+  RETARGET_ROLE_BODY_PART,
+  TrackerRetargetConfig,
+  TrackerRetargetRole,
+} from '@/hooks/tracker-retarget';
 
 const GROUND_COLOR = '#2c2c6b';
+
+const SPINE_NODE_PARTS = [
+  BodyPart.UPPER_CHEST,
+  BodyPart.CHEST,
+  BodyPart.WAIST,
+  BodyPart.HIP,
+] as const;
 
 // Just need to know the length of the total body, so don't need right legs
 const Y_PARTS = [
@@ -52,6 +73,12 @@ export type SkeletonPreviewView = {
   hidden: boolean;
   tween: Tween<Vector3>;
   onHeightChange: (view: SkeletonPreviewView, newHeight: number) => void;
+};
+
+type RetargetMarker = {
+  sourceDisc: Mesh;
+  targetDisc: Mesh;
+  line: Line;
 };
 
 function initializePreview(
@@ -83,6 +110,26 @@ function initializePreview(
 
   scene.add(skeletonGroup);
   scene.add(skeleton[0]);
+
+  const retargetGroup = new Group();
+  const retargetMarkers = new Map<TrackerRetargetRole, RetargetMarker>();
+  const springRangeLine = new Line(
+    new BufferGeometry(),
+    new LineBasicMaterial({
+      color: 0xff67d8,
+      transparent: true,
+      opacity: 0.9,
+      depthTest: false,
+    })
+  );
+  springRangeLine.renderOrder = 12;
+  springRangeLine.visible = false;
+  retargetGroup.add(springRangeLine);
+  scene.add(retargetGroup);
+
+  const spineNodeGroup = new Group();
+  const spineNodes = new Map<BodyPart, Mesh>();
+  scene.add(spineNodeGroup);
 
   let heightOffset = 0;
   let skeletonOffset = 0;
@@ -117,6 +164,201 @@ function initializePreview(
     const yawReset = new Quaternion(vec.x, vec.y, vec.z, quat.w).normalize();
 
     skeletonGroup.rotation.setFromQuaternion(yawReset);
+    retargetGroup.rotation.setFromQuaternion(yawReset);
+    spineNodeGroup.rotation.setFromQuaternion(yawReset);
+  };
+
+  const updateSpineNodes = (
+    bones: Map<BodyPart, BoneT>,
+    visible = false
+  ) => {
+    spineNodeGroup.visible = visible;
+    if (!visible) return;
+
+    for (const bodyPart of SPINE_NODE_PARTS) {
+      let node = spineNodes.get(bodyPart);
+      if (!node) {
+        node = new Mesh(
+          new SphereGeometry(0.025, 16, 12),
+          new MeshBasicMaterial({
+            color: 0xf2f4f8,
+            transparent: true,
+            opacity: 0.85,
+            depthTest: false,
+          })
+        );
+        node.renderOrder = 8;
+        spineNodeGroup.add(node);
+        spineNodes.set(bodyPart, node);
+      }
+
+      const position = bones.get(bodyPart)?.headPositionG;
+      if (!position) {
+        node.visible = false;
+        continue;
+      }
+
+      node.visible = true;
+      node.position.set(
+        position.x ?? 0,
+        position.y ?? 0,
+        position.z ?? 0
+      );
+    }
+  };
+
+  const ensureRetargetMarker = (role: TrackerRetargetRole) => {
+    const existing = retargetMarkers.get(role);
+    if (existing) return existing;
+
+    const sourceDisc = new Mesh(
+      new CylinderGeometry(0.045, 0.045, 0.008, 32),
+      new MeshBasicMaterial({
+        transparent: true,
+        opacity: 0.42,
+        side: DoubleSide,
+        depthTest: false,
+        wireframe: true,
+      })
+    );
+    sourceDisc.renderOrder = 9;
+
+    const targetDisc = new Mesh(
+      new CylinderGeometry(0.058, 0.058, 0.012, 32),
+      new MeshBasicMaterial({
+        transparent: true,
+        opacity: 0.68,
+        side: DoubleSide,
+        depthTest: false,
+      })
+    );
+    targetDisc.renderOrder = 11;
+
+    const line = new Line(
+      new BufferGeometry(),
+      new LineBasicMaterial({
+        transparent: true,
+        opacity: 0.75,
+        depthTest: false,
+      })
+    );
+    line.renderOrder = 10;
+
+    retargetGroup.add(line);
+    retargetGroup.add(sourceDisc);
+    retargetGroup.add(targetDisc);
+
+    const marker = { sourceDisc, targetDisc, line };
+    retargetMarkers.set(role, marker);
+    return marker;
+  };
+
+  const updateRetargetTargets = (
+    trackers: TrackerDataT[],
+    bones: Map<BodyPart, BoneT>,
+    config?: TrackerRetargetConfig,
+    selectedRole?: TrackerRetargetRole,
+    showSourceTargets = false,
+    showRetargetTargets = false,
+    showDisplacementLines = true,
+    previewConfiguredOffsets = true,
+    showSpringRange = false
+  ) => {
+    retargetGroup.visible =
+      showSourceTargets ||
+      showRetargetTargets ||
+      showDisplacementLines ||
+      showSpringRange;
+    springRangeLine.visible = false;
+    if (!retargetGroup.visible) return;
+
+    const hipRotation = QuaternionFromQuatT(
+      bones.get(BodyPart.HIP)?.rotationG
+    ).normalize();
+    const bodyYaw = new Quaternion(0, hipRotation.y, 0, hipRotation.w);
+    if (bodyYaw.lengthSq() > 0) bodyYaw.normalize();
+    else bodyYaw.identity();
+
+    for (const role of RETARGET_ROLES) {
+      const marker = ensureRetargetMarker(role);
+      const bodyPart = RETARGET_ROLE_BODY_PART[role];
+      const tracker = trackers.find(
+        (candidate) =>
+          candidate.info?.bodyPart === bodyPart && candidate.position
+      );
+
+      if (!tracker?.position) {
+        marker.sourceDisc.visible = false;
+        marker.targetDisc.visible = false;
+        marker.line.visible = false;
+        continue;
+      }
+
+      const source = new Vector3(
+        tracker.position.x ?? 0,
+        tracker.position.y ?? 0,
+        tracker.position.z ?? 0
+      );
+      const target = source.clone();
+      const adjustment = config?.trackers[role];
+      const applyConfiguredOffset =
+        adjustment?.enabled &&
+        (previewConfiguredOffsets || config?.enabled === true);
+
+      if (applyConfiguredOffset && adjustment) {
+        const offset = new Vector3(
+          adjustment.x,
+          adjustment.y,
+          adjustment.z
+        );
+        if (adjustment.space === 'body_yaw') {
+          offset.applyQuaternion(bodyYaw);
+        }
+        target.add(offset);
+      }
+
+      const trackerRotation =
+        tracker.rotationIdentityAdjusted ?? tracker.rotation;
+      const targetRotation = trackerRotation
+        ? QuaternionFromQuatT(trackerRotation)
+        : new Quaternion().identity();
+
+      const selected = role === selectedRole;
+
+      marker.sourceDisc.visible = showSourceTargets;
+      marker.sourceDisc.position.copy(source);
+      marker.sourceDisc.quaternion.copy(targetRotation);
+      marker.sourceDisc.scale.setScalar(selected ? 1.18 : 1);
+      const sourceMaterial = marker.sourceDisc.material as MeshBasicMaterial;
+      sourceMaterial.color.set(selected ? 0xffffff : 0xaab2c0);
+      sourceMaterial.opacity = selected ? 0.8 : 0.42;
+
+      marker.targetDisc.visible = showRetargetTargets;
+      marker.targetDisc.position.copy(target);
+      marker.targetDisc.quaternion.copy(targetRotation);
+      marker.targetDisc.scale.setScalar(selected ? 1.35 : 1);
+      const targetMaterial = marker.targetDisc.material as MeshBasicMaterial;
+      targetMaterial.color.set(selected ? 0xffd54a : 0x44e4ff);
+      targetMaterial.opacity = selected ? 0.92 : 0.62;
+
+      marker.line.visible =
+        showDisplacementLines &&
+        showSourceTargets &&
+        showRetargetTargets &&
+        !!adjustment?.enabled;
+      const lineMaterial = marker.line.material as LineBasicMaterial;
+      lineMaterial.color.set(selected ? 0xffd54a : 0x44e4ff);
+      marker.line.geometry.setFromPoints([source, target]);
+
+      if (showSpringRange && selected && config?.springBones[role]?.enabled) {
+        const distance = config.springBones[role].distance;
+        springRangeLine.geometry.setFromPoints([
+          new Vector3(target.x, target.y - distance, target.z),
+          new Vector3(target.x, target.y + distance, target.z),
+        ]);
+        springRangeLine.visible = true;
+      }
+    }
   };
 
   const computeUserHeight = (bones: Map<BodyPart, BoneT>) => {
@@ -224,11 +466,29 @@ function initializePreview(
       if (newSkeletinOffset != skeletonOffset) {
         skeletonOffset = newSkeletinOffset;
         skeletonGroup.position.set(0, skeletonOffset, 0);
+        retargetGroup.position.set(0, skeletonOffset, 0);
+        spineNodeGroup.position.set(0, skeletonOffset, 0);
       }
     },
+    updateSpineNodes,
+    updateRetargetTargets,
     destroy: () => {
       cancelAnimationFrame(animationFrameId);
       skeletonHelper.dispose();
+      springRangeLine.geometry.dispose();
+      (springRangeLine.material as LineBasicMaterial).dispose();
+      spineNodes.forEach((node) => {
+        node.geometry.dispose();
+        (node.material as MeshBasicMaterial).dispose();
+      });
+      retargetMarkers.forEach(({ sourceDisc, targetDisc, line }) => {
+        sourceDisc.geometry.dispose();
+        (sourceDisc.material as MeshBasicMaterial).dispose();
+        targetDisc.geometry.dispose();
+        (targetDisc.material as MeshBasicMaterial).dispose();
+        line.geometry.dispose();
+        (line.material as LineBasicMaterial).dispose();
+      });
       if (!renderer) return;
       renderer.dispose();
       renderer = null; // Very important for js to free the WebGL context. dispose does not to it alone
@@ -300,17 +560,33 @@ type PreviewContext = ReturnType<typeof initializePreview>;
 function SkeletonVisualizer({
   onInit,
   disabled = false,
+  retargetConfig,
+  selectedRetargetRole,
+  showSpineNodes = false,
+  showSourceTargets = false,
+  showRetargetTargets = false,
+  showDisplacementLines = true,
+  previewConfiguredOffsets = true,
+  showSpringRange = false,
 }: {
   onInit: (context: PreviewContext) => void;
   disabled?: boolean;
+  retargetConfig?: TrackerRetargetConfig;
+  selectedRetargetRole?: TrackerRetargetRole;
+  showSpineNodes?: boolean;
+  showSourceTargets?: boolean;
+  showRetargetTargets?: boolean;
+  showDisplacementLines?: boolean;
+  previewConfiguredOffsets?: boolean;
+  showSpringRange?: boolean;
 }) {
   const { config } = useConfig();
 
   const previewContext = useRef<PreviewContext | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const resizeObserver = useRef(new ResizeObserver(([e]) => onResize(e)));
   const _bones = useAtomValue(bonesAtom);
+  const computedTrackers = useAtomValue(computedTrackersAtom);
 
   const bones = useMemo(() => {
     return new Map(_bones.map((b) => [b.bodyPart, b]));
@@ -329,55 +605,94 @@ function SkeletonVisualizer({
     context.updatesBones(bones);
   }, [bones, disabled]);
 
-  const onResize = (e: ResizeObserverEntry) => {
+  useEffect(() => {
     const context = previewContext.current;
-    if (!context || !containerRef.current || !canvasRef.current) return;
-    context.resize(e.contentRect.width, e.contentRect.height);
-  };
+    if (!context || disabled) return;
+    context.updateSpineNodes(bones, showSpineNodes);
+  }, [bones, showSpineNodes, disabled]);
 
-  const onEnter = () => {
-    if (config?.devSettings.fastDataFeed) return;
+  useEffect(() => {
     const context = previewContext.current;
-    if (!context) return;
-    context.setFrameInterval(1000 / BASE_FRAMERATE);
-  };
-
-  const onLeave = () => {
-    if (config?.devSettings.fastDataFeed) return;
-    const context = previewContext.current;
-    if (!context) return;
-    context.setFrameInterval(1000 / LOW_FRAMERATE);
-  };
+    if (!context || disabled) return;
+    context.updateRetargetTargets(
+      computedTrackers.map(({ tracker }) => tracker),
+      bones,
+      retargetConfig,
+      selectedRetargetRole,
+      showSourceTargets,
+      showRetargetTargets,
+      showDisplacementLines,
+      previewConfiguredOffsets,
+      showSpringRange
+    );
+  }, [
+    computedTrackers,
+    bones,
+    retargetConfig,
+    selectedRetargetRole,
+    showSourceTargets,
+    showRetargetTargets,
+    showDisplacementLines,
+    previewConfiguredOffsets,
+    showSpringRange,
+    disabled,
+  ]);
 
   useLayoutEffect(() => {
     if (disabled) return;
-    if (!canvasRef.current || !containerRef.current)
-      throw 'invalid state - no canvas or container';
-    resizeObserver.current.observe(containerRef.current);
 
-    previewContext.current = initializePreview(
-      canvasRef.current,
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container)
+      throw 'invalid state - no canvas or container';
+
+    const context = initializePreview(
+      canvas,
       createChildren(bones, BoneKind.root)
     );
+    previewContext.current = context;
+
     if (!config?.devSettings.fastDataFeed)
-      previewContext.current.setFrameInterval(1000 / LOW_FRAMERATE);
+      context.setFrameInterval(1000 / LOW_FRAMERATE);
 
-    const rect = containerRef.current.getBoundingClientRect();
-    previewContext.current.resize(rect.width, rect.height);
+    const resize = (entry?: ResizeObserverEntry) => {
+      if (entry) {
+        context.resize(entry.contentRect.width, entry.contentRect.height);
+        return;
+      }
 
-    containerRef.current.addEventListener('mouseenter', onEnter);
-    containerRef.current.addEventListener('mouseleave', onLeave);
+      const rect = container.getBoundingClientRect();
+      context.resize(rect.width, rect.height);
+    };
 
-    onInit(previewContext.current);
+    const onEnter = () => {
+      if (config?.devSettings.fastDataFeed) return;
+      context.setFrameInterval(1000 / BASE_FRAMERATE);
+    };
+
+    const onLeave = () => {
+      if (config?.devSettings.fastDataFeed) return;
+      context.setFrameInterval(1000 / LOW_FRAMERATE);
+    };
+
+    const observer = new ResizeObserver(([entry]) => resize(entry));
+    observer.observe(container);
+    resize();
+
+    container.addEventListener('mouseenter', onEnter);
+    container.addEventListener('mouseleave', onLeave);
+
+    onInit(context);
 
     return () => {
-      if (!previewContext.current || !containerRef.current) return;
-      resizeObserver.current.unobserve(containerRef.current);
-      previewContext.current.destroy();
-      previewContext.current = null;
+      observer.disconnect();
+      container.removeEventListener('mouseenter', onEnter);
+      container.removeEventListener('mouseleave', onLeave);
+      context.destroy();
 
-      containerRef.current.removeEventListener('mouseenter', onEnter);
-      containerRef.current.removeEventListener('mouseleave', onLeave);
+      if (previewContext.current === context) {
+        previewContext.current = null;
+      }
     };
   }, [disabled]);
 
@@ -405,10 +720,26 @@ export function SkeletonVisualizerWidget({
   },
   disabled = false,
   toggleDisabled,
+  retargetConfig,
+  selectedRetargetRole,
+  showSpineNodes = false,
+  showSourceTargets = false,
+  showRetargetTargets = false,
+  showDisplacementLines = true,
+  previewConfiguredOffsets = true,
+  showSpringRange = false,
 }: {
   onInit?: (context: PreviewContext) => void;
   disabled?: boolean;
   toggleDisabled?: () => void;
+  retargetConfig?: TrackerRetargetConfig;
+  selectedRetargetRole?: TrackerRetargetRole;
+  showSpineNodes?: boolean;
+  showSourceTargets?: boolean;
+  showRetargetTargets?: boolean;
+  showDisplacementLines?: boolean;
+  previewConfiguredOffsets?: boolean;
+  showSpringRange?: boolean;
 }) {
   const { l10n } = useLocalization();
   const [error, setError] = useState(false);
@@ -421,7 +752,18 @@ export function SkeletonVisualizerWidget({
         })}
       >
         <ErrorBoundary onError={() => setError(true)} fallback={<></>}>
-          <SkeletonVisualizer onInit={onInit} disabled={disabled} />
+          <SkeletonVisualizer
+            onInit={onInit}
+            disabled={disabled}
+            retargetConfig={retargetConfig}
+            selectedRetargetRole={selectedRetargetRole}
+            showSpineNodes={showSpineNodes}
+            showSourceTargets={showSourceTargets}
+            showRetargetTargets={showRetargetTargets}
+            showDisplacementLines={showDisplacementLines}
+            previewConfiguredOffsets={previewConfiguredOffsets}
+            showSpringRange={showSpringRange}
+          />
         </ErrorBoundary>
       </div>
       <div

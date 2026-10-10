@@ -102,13 +102,22 @@ abstract class ProtobufBridge(@JvmField protected val bridgeName: String) : ISte
 		}
 	}
 
+	/**
+	 * Position exported to the remote bridge.
+	 *
+	 * Kept as a separate hook from rotation on purpose: game/avatar-space tracker
+	 * placement must not feed back into SlimeVR's anatomical rotation solve.
+	 */
+	@VRServerThread
+	protected open fun getTrackerOutputPosition(localTracker: Tracker): Vector3 = localTracker.position
+
 	@VRServerThread
 	protected fun writeTrackerUpdate(localTracker: Tracker) {
 		val builder = ProtobufMessages.Position.newBuilder()
 			.setTrackerId(localTracker.id)
 
 		if (localTracker.hasPosition) {
-			val pos = localTracker.position
+			val pos = getTrackerOutputPosition(localTracker)
 			builder.setX(pos.x)
 			builder.setY(pos.y)
 			builder.setZ(pos.z)

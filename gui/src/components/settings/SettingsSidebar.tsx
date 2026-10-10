@@ -54,6 +54,10 @@ export function SettingsSidebar() {
             id="settings-sidebar-steamvr"
           />
           <SettingsLink
+            to="/settings/tracker-retargeting"
+            id="settings-sidebar-tracker_retargeting"
+          />
+          <SettingsLink
             to="/settings/trackers"
             scrollTo="stayaligned"
             id="settings-sidebar-stay_aligned"

@@ -6,6 +6,7 @@ import dev.slimevr.config.ArmsResetModes
 import dev.slimevr.config.DriftCompensationConfig
 import dev.slimevr.config.ResetsConfig
 import dev.slimevr.filtering.CircularArrayList
+import dev.slimevr.tracking.processor.stayaligned.neural.NeuralStayAlignedController
 import dev.slimevr.tracking.trackers.udp.TrackerDataType
 import io.github.axisangles.ktmath.EulerAngles
 import io.github.axisangles.ktmath.EulerOrder
@@ -259,6 +260,7 @@ class TrackerResetsHandler(val tracker: Tracker) {
 	 */
 	fun resetFull(reference: Quaternion) {
 		constraintFix = Quaternion.IDENTITY
+		NeuralStayAlignedController.discardHistory(tracker)
 
 		if (tracker.trackerDataType == TrackerDataType.FLEX_RESISTANCE) {
 			tracker.trackerFlexHandler.resetMin()
@@ -365,9 +367,18 @@ class TrackerResetsHandler(val tracker: Tracker) {
 			return
 		}
 
-		// Old rot for drift compensation
+		// Old rot for drift compensation and neural reset supervision.
 		val oldRot = adjustToReference(tracker.getRawRotation())
 		lastResetQuaternion = oldRot
+
+		// A normal soft yaw reset is an explicit signed label: the user is
+		// telling us how much accumulated heading error remained at this point.
+		// Capture it before yawFix or Stay Aligned state is reset.
+		NeuralStayAlignedController.onYawReset(
+			tracker,
+			oldRot,
+			reference,
+		)
 
 		val yawFixOld = yawFix
 		yawFix = fixYaw(tracker.getRawRotation() * mountingOrientation, reference)
@@ -398,6 +409,8 @@ class TrackerResetsHandler(val tracker: Tracker) {
 	 * and stores it in mountRotFix, and adjusts yawFix
 	 */
 	fun resetMounting(reference: Quaternion) {
+		NeuralStayAlignedController.discardHistory(tracker)
+
 		if (tracker.trackerDataType == TrackerDataType.FLEX_RESISTANCE) {
 			tracker.trackerFlexHandler.resetMax()
 			tracker.resetFilteringQuats(reference)

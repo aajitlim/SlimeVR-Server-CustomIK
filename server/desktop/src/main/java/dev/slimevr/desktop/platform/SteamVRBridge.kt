@@ -8,6 +8,8 @@ import dev.slimevr.bridge.ISteamVRBridge
 import dev.slimevr.config.BridgeConfig
 import dev.slimevr.desktop.platform.ProtobufMessages.*
 import dev.slimevr.protocol.rpc.settings.RPCSettingsHandler
+import dev.slimevr.tracking.processor.retarget.TrackerPositionRetargeter
+import dev.slimevr.tracking.processor.retarget.TrackerSpringBoneProcessor
 import dev.slimevr.tracking.trackers.DeviceOrigin
 import dev.slimevr.tracking.trackers.Tracker
 import dev.slimevr.tracking.trackers.TrackerPosition
@@ -19,6 +21,8 @@ import dev.slimevr.util.ann.VRServerThread
 import io.eiren.util.OperatingSystem
 import io.eiren.util.collections.FastList
 import io.eiren.util.logging.LogManager
+import io.github.axisangles.ktmath.Vector3
+import io.github.axisangles.ktmath.Vector3.Companion.POS_Y
 import java.nio.file.Path
 import kotlin.io.path.Path
 import kotlin.io.path.exists
@@ -111,7 +115,118 @@ abstract class SteamVRBridge(
 	protected val runnerThread: Thread = Thread(this, threadName)
 	private var bindingsProviderManager: BindingsProviderManager? = null
 	protected val config: BridgeConfig = server.configManager.vrConfig.getBridge(bridgeSettingsKey)
+	private val springBoneProcessor = TrackerSpringBoneProcessor()
 	var connected: Boolean = false
+
+	/**
+	 * Apply avatar/game-space position retargeting only at the SteamVR export
+	 * boundary. The local computed tracker object, skeleton bones, leg tweaks,
+	 * and tracker quaternion are left untouched.
+	 */
+	@VRServerThread
+	override fun getTrackerOutputPosition(localTracker: Tracker): Vector3 {
+		var outputPosition = super.getTrackerOutputPosition(localTracker)
+		if (!localTracker.hasPosition) return outputPosition
+
+		val role = localTracker.trackerPosition?.trackerRole ?: return outputPosition
+
+		if (config.positionRetargetingEnabled) {
+			val adjustment = config.getTrackerPositionOffset(role)
+			if (adjustment != null) {
+				val bodyYaw = server.humanPoseManager.skeleton.hipBone
+					.getGlobalRotation()
+					.project(POS_Y)
+					.unit()
+
+				outputPosition = TrackerPositionRetargeter.apply(
+					outputPosition,
+					bodyYaw,
+					adjustment,
+				)
+			}
+		}
+
+		if (config.springBonesEnabled) {
+			val springConfig = config.getTrackerSpringBone(role)
+			if (springConfig?.enabled == true) {
+				outputPosition = springBoneProcessor.apply(
+					role,
+					outputPosition,
+					springConfig,
+					accelerationY = if (config.springBonesUseAcceleration) {
+						getSpringAccelerationY(role)
+					} else {
+						null
+					},
+				)
+			} else {
+				springBoneProcessor.reset(role)
+			}
+		} else {
+			springBoneProcessor.reset(role)
+		}
+
+		return outputPosition
+	}
+
+	private fun getSpringAccelerationY(role: TrackerRole): Float? {
+		val skeleton = server.humanPoseManager.skeleton
+
+		// Keep acceleration affinity local to the body point represented by the
+		// exported tracker. Do NOT borrow an adjacent torso/limb IMU merely to
+		// keep accelerometer mode active: two separate Spring Bones driven by the
+		// same physical IMU can develop different phases and create large
+		// relative target motion downstream. If the local sensor is unavailable,
+		// the spring processor falls back to its own position-derived driver.
+		val candidates: Array<Tracker?> = when (role) {
+			TrackerRole.CHEST -> arrayOf(
+				skeleton.chestTracker,
+				skeleton.upperChestTracker,
+			)
+			TrackerRole.WAIST -> arrayOf(
+				skeleton.waistTracker,
+				skeleton.hipTracker,
+			)
+			TrackerRole.LEFT_KNEE -> arrayOf(
+				skeleton.leftLowerLegTracker,
+				skeleton.leftUpperLegTracker,
+			)
+			TrackerRole.RIGHT_KNEE -> arrayOf(
+				skeleton.rightLowerLegTracker,
+				skeleton.rightUpperLegTracker,
+			)
+			TrackerRole.LEFT_FOOT -> arrayOf(
+				skeleton.leftFootTracker,
+			)
+			TrackerRole.RIGHT_FOOT -> arrayOf(
+				skeleton.rightFootTracker,
+			)
+			TrackerRole.LEFT_ELBOW -> arrayOf(
+				skeleton.leftLowerArmTracker,
+				skeleton.leftUpperArmTracker,
+			)
+			TrackerRole.RIGHT_ELBOW -> arrayOf(
+				skeleton.rightLowerArmTracker,
+				skeleton.rightUpperArmTracker,
+			)
+			TrackerRole.LEFT_HAND -> arrayOf(
+				skeleton.leftHandTracker,
+			)
+			TrackerRole.RIGHT_HAND -> arrayOf(
+				skeleton.rightHandTracker,
+			)
+			else -> emptyArray()
+		}
+
+		for (tracker in candidates) {
+			if (tracker == null || !tracker.hasAcceleration) continue
+			val acceleration = tracker.getAcceleration()
+			if (acceleration == Vector3.NULL || !acceleration.y.isFinite()) continue
+			return acceleration.y
+		}
+
+		return null
+	}
 
 	@VRServerThread
 	override fun startBridge() {

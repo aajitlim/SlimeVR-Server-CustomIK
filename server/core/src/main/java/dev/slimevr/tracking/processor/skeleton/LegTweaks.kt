@@ -44,7 +44,6 @@ class LegTweaks(private val skeleton: HumanSkeleton) {
 		// knee / hip correction
 		private const val KNEE_CORRECTION_WEIGHT = 0.00f
 		private const val KNEE_LATERAL_WEIGHT = 0.8f
-		private const val WAIST_PUSH_WEIGHT = 0.2f
 
 		// COM calculation
 		private const val HEAD_MASS = 0.0827f
@@ -80,6 +79,7 @@ class LegTweaks(private val skeleton: HumanSkeleton) {
 	private var currentDisengagementOffset = 0.0f
 	private var footLength = 0.0f
 	private var currentCorrectionStrength = 0.3f // default value
+	private var hipFloorLiftWeight = 0.0f
 
 	private var initialized = true
 	var enabled = true // master switch
@@ -170,6 +170,7 @@ class LegTweaks(private val skeleton: HumanSkeleton) {
 		floorClipEnabled =
 			skeleton.humanPoseManager.getToggle(SkeletonConfigToggles.FLOOR_CLIP)
 		alwaysUseFloorclip = config!!.alwaysUseFloorclip
+		hipFloorLiftWeight = config!!.hipFloorLiftWeight.coerceIn(0f, 1f)
 		skatingCorrectionEnabled = skeleton.humanPoseManager
 			.getToggle(SkeletonConfigToggles.SKATING_CORRECTION)
 		toeSnapEnabled =
@@ -439,7 +440,7 @@ class LegTweaks(private val skeleton: HumanSkeleton) {
 
 		hipPosition = Vector3(
 			hipPosition.x,
-			hipPosition.y + avgOffset / 2 * WAIST_PUSH_WEIGHT,
+			hipPosition.y + avgOffset / 2 * hipFloorLiftWeight,
 			hipPosition.z,
 		)
 	}
