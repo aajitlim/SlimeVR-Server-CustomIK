@@ -563,10 +563,16 @@ export function NeuralStayAlignedSettings({
                     {' '}{device.historySeconds.toFixed(1)} seconds
                   </Typography>
                   <Typography color="secondary">
+                    Last skeleton reset training: {device.lastTrainingMilliseconds.toFixed(1)} ms
+                  </Typography>
+                  <Typography color="secondary">
                     Hardware: {device.hardwareRawEquivalentSamples.toLocaleString()}
                     {' '}original samples, {device.hardwareCompressedCapsules}
                     {' '}capsules, {device.hardwareReplayTokens} replay tokens,
                     {' '}{device.hardwareHistorySeconds.toFixed(1)} seconds
+                  </Typography>
+                  <Typography color="secondary">
+                    Last hardware reset training: {device.hardwareLastTrainingMilliseconds.toFixed(1)} ms
                   </Typography>
                 </div>
 
