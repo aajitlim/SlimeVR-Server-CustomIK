@@ -105,6 +105,7 @@ class NeuralYawGruModel(
 		targetCorrectionDeg: Float,
 		learningRate: Float,
 		deviceBias: Float,
+		chunkSize: Int = 64,
 	): TrainingResult {
 		if (samples.isEmpty()) {
 			return TrainingResult(
@@ -115,20 +116,25 @@ class NeuralYawGruModel(
 			)
 		}
 
-		val steps = ArrayList<ForwardStep>(samples.size)
+		// Streaming forward pass: store only recurrent states at chunk boundaries.
+		// This avoids retaining 50k full GRU steps at once. During reverse BPTT
+		// we recompute each chunk from its saved boundary state, then propagate
+		// hidden-state gradients across chunk boundaries exactly.
+		val valid = samples.filter {
+			it.features.size == inputSize && it.dtSeconds.isFinite() && it.dtSeconds > 0f
+		}
+		if (valid.isEmpty()) {
+			return TrainingResult(0f, 0f, targetCorrectionDeg, deviceBias)
+		}
+		val chunk = chunkSize.coerceIn(8, 256)
+		val checkpoints = ArrayList<FloatArray>((valid.size + chunk - 1) / chunk)
 		var hidden = newHidden()
 		var predictedCorrection = 0f
-
-		for (sample in samples) {
-			if (sample.features.size != inputSize) continue
-			val step = forwardStep(sample.features, hidden, deviceBias)
-			steps.add(step.copy(dtSeconds = sample.dtSeconds))
+		for (index in valid.indices) {
+			if (index % chunk == 0) checkpoints.add(hidden.copyOf())
+			val step = forwardStep(valid[index].features, hidden, deviceBias)
 			hidden = step.hidden
-			predictedCorrection += step.rateDegPerSec * sample.dtSeconds
-		}
-
-		if (steps.isEmpty()) {
-			return TrainingResult(0f, 0f, targetCorrectionDeg, deviceBias)
+			predictedCorrection += step.rateDegPerSec * valid[index].dtSeconds
 		}
 
 		val error = predictedCorrection - targetCorrectionDeg
@@ -150,8 +156,20 @@ class NeuralYawGruModel(
 
 		var dhNext = FloatArray(hiddenSize)
 
-		for (stepIndex in steps.indices.reversed()) {
-			val step = steps[stepIndex]
+		for (chunkIndex in checkpoints.indices.reversed()) {
+			val start = chunkIndex * chunk
+			val end = minOf(start + chunk, valid.size)
+			var chunkHidden = checkpoints[chunkIndex]
+			val steps = ArrayList<ForwardStep>(end - start)
+			for (i in start until end) {
+				val sample = valid[i]
+				val step = forwardStep(sample.features, chunkHidden, deviceBias)
+				steps.add(step.copy(dtSeconds = sample.dtSeconds))
+				chunkHidden = step.hidden
+			}
+
+			for (stepIndex in steps.indices.reversed()) {
+				val step = steps[stepIndex]
 			val normalizedRate =
 				(step.rateDegPerSec / MODEL_MAX_RATE_DEG_PER_SEC)
 					.coerceIn(-0.999999f, 0.999999f)
@@ -241,7 +259,8 @@ class NeuralYawGruModel(
 				}
 			}
 
-			dhNext = dhPrev
+				dhNext = dhPrev
+			}
 		}
 
 		val lr = learningRate.coerceIn(1e-6f, 0.01f)
