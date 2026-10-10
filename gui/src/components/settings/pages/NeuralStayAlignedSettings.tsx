@@ -128,6 +128,96 @@ export function NeuralStayAlignedSettings({
           </Typography>
         </div>
 
+        <div className="bg-background-60 rounded-lg p-3 flex flex-col gap-4">
+          <div className="flex flex-col gap-1">
+            <Typography variant="section-title">
+              Stage 1 — Hardware-only drift GRU
+            </Typography>
+            <Typography color="secondary">
+              A separate tiny GRU is trained for each physical sensor. It sees
+              only that sensor's own raw rotation changes, acceleration,
+              temperature, temperature change rate and measurement availability.
+              No neighboring limbs or virtual IK targets are used.
+            </Typography>
+          </div>
+
+          <CheckboxInternal
+            name="neural-hardware-learning"
+            variant="toggle"
+            outlined
+            label="Learn individual hardware drift"
+            checked={config.neuralHardwareLearningEnabled}
+            disabled={!config.neuralStayAlignedEnabled}
+            onChange={(event) =>
+              updateConfig({
+                ...config,
+                neuralHardwareLearningEnabled: event.currentTarget.checked,
+              })
+            }
+          />
+
+          <CheckboxInternal
+            name="neural-hardware-fusion"
+            variant="toggle"
+            outlined
+            label="Blend hardware predictions into yaw correction"
+            checked={config.neuralHardwareFusionEnabled}
+            disabled={
+              !config.neuralStayAlignedEnabled ||
+              !config.neuralHardwareLearningEnabled
+            }
+            onChange={(event) =>
+              updateConfig({
+                ...config,
+                neuralHardwareFusionEnabled: event.currentTarget.checked,
+              })
+            }
+          />
+
+          <Typography color="secondary">
+            Leave fusion OFF while collecting independent reset-supervised
+            training events. With fusion enabled, hardware and cross-skeleton
+            predictions are weighted together, never added. The same hard
+            correction-rate and motion-protection gate still applies.
+          </Typography>
+
+          <RangeControl
+            label="Maximum hardware blend"
+            value={config.neuralHardwareBlend * 100}
+            min={0}
+            max={100}
+            step={5}
+            suffix="%"
+            onChange={(v) =>
+              updateConfig({
+                ...config,
+                neuralHardwareBlend: v / 100,
+              })
+            }
+          />
+
+          <RangeControl
+            label="Temperature freshness limit"
+            value={config.neuralHardwareTemperatureMaxAgeSeconds}
+            min={5}
+            max={300}
+            step={5}
+            suffix=" s"
+            onChange={(v) =>
+              updateConfig({
+                ...config,
+                neuralHardwareTemperatureMaxAgeSeconds: v,
+              })
+            }
+          />
+          <Typography color="secondary">
+            Temperature is read from physical UDP thermometer packets when
+            supported. Missing or stale readings are explicitly masked.
+            Hardware-only learning continues from acceleration and rotation
+            history when temperature is unavailable.
+          </Typography>
+        </div>
+
         <div className="bg-background-70 rounded-lg p-3 flex flex-col gap-4">
           <Typography variant="section-title">
             Learned correction safety gate
@@ -417,6 +507,59 @@ export function NeuralStayAlignedSettings({
                   <div className="bg-background-70 rounded-lg p-2">
                     <Typography bold>{device.lastLoss.toFixed(4)}</Typography>
                     <Typography color="secondary">last loss</Typography>
+                  </div>
+                </div>
+
+                <div className="bg-background-70 rounded-lg p-3 flex flex-col gap-2">
+                  <Typography bold>Individual hardware estimator</Typography>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <Typography color="secondary">Temperature</Typography>
+                      <Typography bold>
+                        {device.hardwareTemperatureFresh &&
+                        device.hardwareTemperatureCelsius !== null
+                          ? `${device.hardwareTemperatureCelsius.toFixed(1)}°C`
+                          : 'Unavailable / stale'}
+                      </Typography>
+                    </div>
+                    <div>
+                      <Typography color="secondary">Temperature change</Typography>
+                      <Typography bold>
+                        {device.hardwareTemperatureFresh
+                          ? `${device.hardwareTemperatureRateCelsiusPerSec.toFixed(3)}°C/s`
+                          : 'N/A'}
+                      </Typography>
+                    </div>
+                    <div>
+                      <Typography color="secondary">Local drift prediction</Typography>
+                      <Typography bold>
+                        {device.hardwarePredictedRateDegPerSec.toFixed(3)}°/s
+                      </Typography>
+                    </div>
+                    <div>
+                      <Typography color="secondary">Hardware reset labels</Typography>
+                      <Typography bold>{device.hardwareResetLabels}</Typography>
+                    </div>
+                    <div>
+                      <Typography color="secondary">Hardware samples</Typography>
+                      <Typography bold>
+                        {device.hardwareSamplesSeen} ({device.hardwareHistorySize} buffered)
+                      </Typography>
+                    </div>
+                    <div>
+                      <Typography color="secondary">Hardware training loss</Typography>
+                      <Typography bold>{device.hardwareLastLoss.toFixed(4)}</Typography>
+                    </div>
+                    <div>
+                      <Typography color="secondary">Last prediction error</Typography>
+                      <Typography bold>{device.hardwareLastErrorDeg.toFixed(2)}°</Typography>
+                    </div>
+                    <div>
+                      <Typography color="secondary">Hardware maturity</Typography>
+                      <Typography bold>
+                        {(device.hardwareConfidence * 100).toFixed(0)}%
+                      </Typography>
+                    </div>
                   </div>
                 </div>
 
