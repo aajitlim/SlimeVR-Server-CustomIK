@@ -294,11 +294,11 @@ export function NeuralStayAlignedSettings({
           <Typography variant="section-title">Training window</Typography>
 
           <RangeControl
-            label="Compact history samples"
+            label="History resolution budget"
             value={config.neuralStayAlignedHistorySamples}
-            min={100}
-            max={5000}
-            step={100}
+            min={1000}
+            max={50000}
+            step={1000}
             onChange={(value) =>
               updateConfig({
                 ...config,
@@ -306,6 +306,48 @@ export function NeuralStayAlignedSettings({
               })
             }
           />
+
+          <RangeControl
+            label="Recent full-detail samples"
+            value={config.neuralRecentDetailedSamples}
+            min={128}
+            max={4096}
+            step={128}
+            onChange={(value) =>
+              updateConfig({
+                ...config,
+                neuralRecentDetailedSamples: Math.round(value),
+              })
+            }
+          />
+
+          <div className="flex flex-col gap-2">
+            <Typography bold>Compressed history / BPTT chunk size</Typography>
+            <div className="flex gap-2">
+              {[32, 64].map((size) => (
+                <Button
+                  key={size}
+                  variant={
+                    config.neuralHistoryChunkSize === size ? 'tertiary' : 'secondary'
+                  }
+                  onClick={() =>
+                    updateConfig({
+                      ...config,
+                      neuralHistoryChunkSize: size,
+                    })
+                  }
+                >
+                  {size} samples
+                </Button>
+              ))}
+            </div>
+            <Typography color="secondary">
+              Older movements become ordered first / mean / last capsules.
+              Backpropagation uses recurrent-state checkpoints every 32 or
+              64 replay tokens, so it does not store one full training state
+              per original sample.
+            </Typography>
+          </div>
 
           <RangeControl
             label="Feature sample rate"
@@ -323,10 +365,10 @@ export function NeuralStayAlignedSettings({
           />
 
           <Typography color="secondary">
-            Current retained temporal coverage: approximately{' '}
-            {historySeconds.toFixed(1)} seconds per physical sensor. Only the
-            compact 32-value neural feature packets are retained, not the raw
-            SlimeVR sensor stream.
+            {historySeconds.toFixed(0)} seconds of nominal uncompressed
+            resolution at this sample rate. Older movements are progressively
+            summarized, not discarded; the reset may cover far longer than
+            this budget. Fine motion details in older capsules are approximate.
           </Typography>
 
           <div className="flex flex-col gap-2">
@@ -497,8 +539,10 @@ export function NeuralStayAlignedSettings({
                     <Typography color="secondary">samples seen</Typography>
                   </div>
                   <div className="bg-background-70 rounded-lg p-2">
-                    <Typography bold>{device.historySize}</Typography>
-                    <Typography color="secondary">in history</Typography>
+                    <Typography bold>
+                      {device.historyRawEquivalentSamples.toLocaleString()}
+                    </Typography>
+                    <Typography color="secondary">raw samples represented</Typography>
                   </div>
                   <div className="bg-background-70 rounded-lg p-2">
                     <Typography bold>{device.supervisionEvents}</Typography>
@@ -508,6 +552,22 @@ export function NeuralStayAlignedSettings({
                     <Typography bold>{device.lastLoss.toFixed(4)}</Typography>
                     <Typography color="secondary">last loss</Typography>
                   </div>
+                </div>
+
+                <div className="bg-background-70 rounded-lg p-3 flex flex-col gap-2">
+                  <Typography bold>Multi-scale movement memory</Typography>
+                  <Typography color="secondary">
+                    Skeleton: {device.historySize} detailed samples,
+                    {' '}{device.historyCompressedCapsules} capsules,
+                    {' '}{device.historyReplayTokens} replay tokens,
+                    {' '}{device.historySeconds.toFixed(1)} seconds
+                  </Typography>
+                  <Typography color="secondary">
+                    Hardware: {device.hardwareRawEquivalentSamples.toLocaleString()}
+                    {' '}original samples, {device.hardwareCompressedCapsules}
+                    {' '}capsules, {device.hardwareReplayTokens} replay tokens,
+                    {' '}{device.hardwareHistorySeconds.toFixed(1)} seconds
+                  </Typography>
                 </div>
 
                 <div className="bg-background-70 rounded-lg p-3 flex flex-col gap-2">
