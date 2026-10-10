@@ -318,6 +318,23 @@ class WebSocketVRBridge(
 			neuralStayAligned.maxResetSupervisionDeg =
 				json["neuralStayAlignedMaxResetSupervisionDeg"].asDouble().toFloat().coerceIn(1f, 180f)
 		}
+		if (json.has("neuralHardwareLearningEnabled")) {
+			neuralStayAligned.hardwareLearningEnabled =
+				json["neuralHardwareLearningEnabled"].asBoolean()
+		}
+		if (json.has("neuralHardwareFusionEnabled")) {
+			neuralStayAligned.hardwareFusionEnabled =
+				json["neuralHardwareFusionEnabled"].asBoolean()
+		}
+		if (json.has("neuralHardwareBlend")) {
+			neuralStayAligned.hardwareBlend =
+				json["neuralHardwareBlend"].asDouble().toFloat().coerceIn(0f, 1f)
+		}
+		if (json.has("neuralHardwareTemperatureMaxAgeSeconds")) {
+			neuralStayAligned.hardwareTemperatureMaxAgeSeconds =
+				json["neuralHardwareTemperatureMaxAgeSeconds"]
+					.asDouble().toFloat().coerceIn(1f, 600f)
+		}
 
 		if (json.has("boneComplianceEnabled")) {
 			server.configManager.vrConfig.boneCompliance.enabled =
@@ -459,6 +476,13 @@ class WebSocketVRBridge(
 			"neuralStayAlignedMaxResetSupervisionDeg",
 			neuralStayAligned.maxResetSupervisionDeg,
 		)
+		response.put("neuralHardwareLearningEnabled", neuralStayAligned.hardwareLearningEnabled)
+		response.put("neuralHardwareFusionEnabled", neuralStayAligned.hardwareFusionEnabled)
+		response.put("neuralHardwareBlend", neuralStayAligned.hardwareBlend)
+		response.put(
+			"neuralHardwareTemperatureMaxAgeSeconds",
+			neuralStayAligned.hardwareTemperatureMaxAgeSeconds,
+		)
 
 		response.put(
 			"boneComplianceEnabled",
@@ -590,6 +614,26 @@ class WebSocketVRBridge(
 				device.lastTrainingTargetDeg,
 			)
 			deviceNode.put("lastLoss", device.lastLoss)
+			deviceNode.put("hardwareSamplesSeen", device.hardwareSamplesSeen)
+			deviceNode.put("hardwareHistorySize", device.hardwareHistorySize)
+			deviceNode.put("hardwareResetLabels", device.hardwareResetLabels)
+			deviceNode.put(
+				"hardwarePredictedRateDegPerSec",
+				device.hardwarePredictedRateDegPerSec,
+			)
+			deviceNode.put("hardwareLastLoss", device.hardwareLastLoss)
+			deviceNode.put("hardwareLastErrorDeg", device.hardwareLastErrorDeg)
+			deviceNode.put("hardwareConfidence", device.hardwareConfidence)
+			if (device.hardwareTemperatureCelsius != null) {
+				deviceNode.put("hardwareTemperatureCelsius", device.hardwareTemperatureCelsius)
+			} else {
+				deviceNode.putNull("hardwareTemperatureCelsius")
+			}
+			deviceNode.put(
+				"hardwareTemperatureRateCelsiusPerSec",
+				device.hardwareTemperatureRateCelsiusPerSec,
+			)
+			deviceNode.put("hardwareTemperatureFresh", device.hardwareTemperatureFresh)
 			neuralDevices.add(deviceNode)
 		}
 		neuralStatusNode.replace(
