@@ -142,7 +142,21 @@ class Tracker @JvmOverloads constructor(
 	var batteryRemainingRuntime: Long? = null
 	var ping: Int? = null
 	var signalStrength: Int? = null
+	/** Monotonic timestamp of the most recent physical temperature packet. */
+	@Volatile
+	var temperatureLastUpdatedNanos: Long = 0L
+		private set
+
+	@Volatile
 	var temperature: Float? = null
+		set(value) {
+			field = value
+			temperatureLastUpdatedNanos = if (value?.isFinite() == true) {
+				System.nanoTime()
+			} else {
+				0L
+			}
+		}
 	var button: Int? = null
 	var packetsReceived: Int? = null
 	var packetsLost: Int? = null
