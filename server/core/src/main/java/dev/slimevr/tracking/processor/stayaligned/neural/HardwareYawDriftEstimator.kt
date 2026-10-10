@@ -26,6 +26,8 @@ class HardwareYawDriftEstimator {
     )
     private var hidden = network.newHidden()
     private val history = ArrayDeque<NeuralYawSequenceSample>()
+    var historyDurationSeconds: Float = 0f
+        private set
     private var bias = 0f
     private var previousYaw: Float? = null
     private var previousAccelMagnitude: Float? = null
@@ -76,8 +78,9 @@ class HardwareYawDriftEstimator {
         hidden = prediction.hidden
         predictedRateDegPerSec = prediction.rateDegPerSec
         history.addLast(NeuralYawSequenceSample(features, dt))
+        historyDurationSeconds += dt
         while (history.size > historyLimit.coerceIn(100, 5000)) {
-            history.removeFirst()
+            historyDurationSeconds -= history.removeFirst().dtSeconds
         }
         samplesSeen++
         return predictedRateDegPerSec
@@ -107,6 +110,7 @@ class HardwareYawDriftEstimator {
     fun resetTemporal() {
         hidden = network.newHidden()
         history.clear()
+        historyDurationSeconds = 0f
         previousYaw = null
         previousAccelMagnitude = null
         previousTemperature = null
@@ -205,7 +209,7 @@ class HardwareYawDriftEstimator {
 
 
 /** Convex-rate fusion avoids accidentally adding two full drift estimates. */
-internal object HardwareYawFusion {
+object HardwareYawFusion {
     fun blend(
         skeletonRate: Float,
         hardwareRate: Float,
