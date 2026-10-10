@@ -35,7 +35,13 @@ class NeuralStayAlignedConfig {
 	/**
 	 * Compact temporal samples retained per physical sensor.
 	 */
-	var historySamples: Int = 1500
+	var historySamples: Int = 50_000
+
+	/** Number of recent full-resolution samples retained per tracker. */
+	var recentDetailedSamples: Int = 1024
+
+	/** Ordered earlier samples are compressed in this many-sample groups. */
+	var historyChunkSize: Int = 64
 
 	/**
 	 * Target feature sampling frequency. Stay Aligned itself can run much faster.
