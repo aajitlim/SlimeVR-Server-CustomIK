@@ -123,6 +123,7 @@ export type NeuralStayAlignedDeviceStatus = {
   lastResetCorrectionDeg: number;
   lastTrainingTargetDeg: number;
   lastLoss: number;
+  lastTrainingMilliseconds: number;
   hardwareSamplesSeen: number;
   hardwareHistorySize: number;
   hardwareRawEquivalentSamples: number;
@@ -132,6 +133,7 @@ export type NeuralStayAlignedDeviceStatus = {
   hardwareResetLabels: number;
   hardwarePredictedRateDegPerSec: number;
   hardwareLastLoss: number;
+  hardwareLastTrainingMilliseconds: number;
   hardwareLastErrorDeg: number;
   hardwareConfidence: number;
   hardwareTemperatureCelsius: number | null;
@@ -360,6 +362,10 @@ function normalizeNeuralStayAlignedStatus(
           0
         ),
         lastLoss: Math.max(0, finiteNumber(device.lastLoss, 0)),
+        lastTrainingMilliseconds: Math.max(
+          0,
+          finiteNumber(device.lastTrainingMilliseconds, 0)
+        ),
         hardwareSamplesSeen: Math.max(
           0,
           finiteNumber(device.hardwareSamplesSeen, 0)
@@ -395,6 +401,10 @@ function normalizeNeuralStayAlignedStatus(
         hardwareLastLoss: Math.max(
           0,
           finiteNumber(device.hardwareLastLoss, 0)
+        ),
+        hardwareLastTrainingMilliseconds: Math.max(
+          0,
+          finiteNumber(device.hardwareLastTrainingMilliseconds, 0)
         ),
         hardwareLastErrorDeg: Math.max(
           0,
