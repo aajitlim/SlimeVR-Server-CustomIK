@@ -91,6 +91,132 @@ Normal deterministic Stay Aligned is evaluated first.
 Neural Stay Aligned samples after that deterministic step so the neural feature
 packet can observe the current correction state.
 
+### Stage 1: Hardware-only thermal drift estimator
+
+This adds an independently trained GRU for **each physical hardware sensor**,
+before the existing shared, cross-skeleton yaw estimator. The hardware GRU
+deliberately never receives neighboring tracker orientations, body-role
+relationships, HMD heading, computed skeleton positions, or Leg Tweaks state.
+Its only evidence is the *same physical sensor's* raw orientation history,
+acceleration and, when transmitted by its firmware, temperature.
+
+SlimeVR already receives `UDPPacket20Temperature` in
+`TrackersUDPServer.kt` and stores it in `Tracker.temperature`. The hardware
+GRU reuses that value; no new UDP protocol is required. A monotonic
+`temperatureLastUpdatedNanos` is updated when a new reading is assigned.
+Temperature older than the configured freshness limit is **masked as missing**,
+not replaced by a guessed or stale value. Trackers whose firmware never sends
+temperature continue hardware-only learning from rotation and accelerometer
+signals; their temperature channels remain zero with an explicit availability
+mask.
+
+The hardware model has its **own weights, output bias, GRU hidden state, ring
+buffer and reset-label count per physical hardware ID + sensor ID**, separate
+from the pre-existing shared neural model. This is stronger device isolation
+than merely assigning each sensor a hidden state while sharing all weights.
+
+Its compact feature vector has 16 values:
+
+- raw orientation yaw encoded as sine/cosine, plus two quaternion components,
+- signed and absolute yaw-rate approximations derived from successive raw
+  orientations (the current tracker API does **not** expose a separate raw
+  gyroscope angular-velocity vector),
+- world-adjusted acceleration XYZ, magnitude, and magnitude-change estimate,
+- measured temperature relative to a reference temperature, its change from
+  the session baseline, temperature change rate, and a temperature-available bit,
+- elapsed observation time.
+
+Temperature differentiation uses the actual timestamps of **temperature
+packets**, not the 20 Hz neural sample interval: a new thermal reading might
+arrive seconds after the previous one. Treating that as a 50 ms derivative
+would exaggerate heating/cooling by orders of magnitude.
+
+The hardware-only model uses the existing small reset-supervised
+`NeuralYawGruModel` implementation with a 16-input, 12-hidden-unit GRU.
+A soft yaw reset trains the integral of its local predicted drift rates over
+its bounded temporal history against the same signed reset correction used to
+train the cross-skeleton model.
+
+**Important:** temperature and acceleration do not independently establish
+absolute yaw truth. Temperature can correlate with gyro bias, thermal settling,
+and device-specific drift, but the learned mapping becomes trustworthy only
+after useful reset labels across different temperatures/motions. Repeated
+identical resets are not a substitute for diverse supervision.
+
+#### Fusion with the cross-skeleton estimator
+
+Neural Stay Aligned now exposes:
+
+- **Learn individual hardware drift** (off by default).
+- **Blend hardware predictions into yaw correction** (off by default).
+- **Maximum hardware blend** (25% default).
+- **Temperature freshness limit** (90 seconds default).
+
+This is a two-stage system, not two summed correction channels:
+
+```text
+raw sensor + accel + fresh temperature
+                |
+                v
+         per-device GRU
+                |
+                v
+         local yaw-rate estimate
+                |
+                +---------+
+                          |
+skeleton relationships    |
+         |                |
+         v                |
+   existing shared GRU     |
+         |                |
+         +---------+------+
+                   |
+                   v
+         confidence-weighted convex blend
+                   |
+                   v
+       existing hard yaw-rate/motion safety gate
+```
+
+Both estimators are separately trained on the **same reset target**. They are
+never added as two full correction rates. Fusion calculates:
+
+```text
+alpha = maxHardwareBlend * hardwareResetMaturity
+fusedRate = (1 - alpha) * skeletonRate + alpha * hardwareRate
+```
+
+so enabling local hardware estimation cannot double the yaw correction merely
+because two predictors agree. The previous correction rate cap, confidence gate
+and intentional-motion suppression still apply. The original shared network's
+weights are not reset when hardware learning is enabled.
+
+Fusion is optional and disabled by default because the cross-skeleton model may
+already outperform the hardware model. Use the per-device reset-prediction error
+telemetry to compare their performance before allowing local output to influence
+live tracking.
+
+#### Hardware telemetry and tests
+
+The Neural Stay Aligned tab now shows each sensor's:
+
+- actual current temperature in Celsius, or unavailable/stale,
+- last measured thermal change rate,
+- standalone hardware yaw-rate prediction,
+- hardware-only samples and retained history size,
+- hardware reset-label count, training loss, pre-update reset-prediction error,
+- training-maturity confidence.
+
+Added tests verify missing temperature masks, temperature packet timestamp
+differentiation, repeated-packet behavior, independent per-device training on
+opposite signed reset labels, and convex-rate fusion.
+
+The hardware GRU weights, like the existing neural model, are currently
+runtime-only; a server restart clears the learned model. Configuration toggles
+are persisted normally. Full and mounting resets clear temporal history but
+are not treated as supervised drift labels.
+
 ### Shared model, disconnected device state
 
 The network weights are shared between physical sensors so the model can learn
@@ -918,7 +1044,7 @@ influence the computed chest/hip and downstream limb root positions.
 Spring Bones remain export-only and cannot feed back into Bone Compliance or the
 physical skeleton.
 
-## Current custom version: Neural Stay Aligned + Bone Compliance + Spring Bones + retargeting
+## Current custom version: Hardware-aware Neural Stay Aligned + Bone Compliance + Spring Bones + retargeting
 
 This version expands the original position-retargeting experiment into a broader
 **Custom IK** workspace for tuning how SlimeVR's solved body is exported and
