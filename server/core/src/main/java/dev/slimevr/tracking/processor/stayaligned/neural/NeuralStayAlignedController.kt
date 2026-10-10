@@ -270,6 +270,10 @@ object NeuralStayAlignedController {
 				!state.history.isEmpty &&
 				intervalSeconds >=
 				config.minimumResetIntervalSeconds.coerceIn(1f, 600f) &&
+				// Missing tracking time cannot be reconstructed by capsules.
+				// Only train when observed sample time covers most of the
+				// actual reset interval.
+				state.history.durationSeconds >= intervalSeconds * 0.80f &&
 				abs(correctionDeg) <=
 				config.maxResetSupervisionDeg.coerceIn(1f, 180f)
 
