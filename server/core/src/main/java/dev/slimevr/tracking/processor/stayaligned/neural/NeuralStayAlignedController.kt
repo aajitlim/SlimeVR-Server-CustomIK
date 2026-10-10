@@ -11,7 +11,6 @@ import dev.slimevr.tracking.trackers.TrackerPosition
 import dev.slimevr.tracking.trackers.udp.MagnetometerStatus
 import io.github.axisangles.ktmath.EulerOrder
 import io.github.axisangles.ktmath.Quaternion
-import java.util.ArrayDeque
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 import kotlin.math.cos
@@ -24,6 +23,10 @@ data class NeuralStayAlignedDeviceStatus(
 	val bodyPosition: String,
 	val samplesSeen: Long,
 	val historySize: Int,
+	val historyRawEquivalentSamples: Long,
+	val historyCompressedCapsules: Int,
+	val historyReplayTokens: Int,
+	val historySeconds: Float,
 	val supervisionEvents: Int,
 	val predictedRateDegPerSec: Float,
 	val appliedRateDegPerSec: Float,
@@ -33,6 +36,10 @@ data class NeuralStayAlignedDeviceStatus(
 	val lastLoss: Float,
 	val hardwareSamplesSeen: Long,
 	val hardwareHistorySize: Int,
+	val hardwareRawEquivalentSamples: Long,
+	val hardwareCompressedCapsules: Int,
+	val hardwareReplayTokens: Int,
+	val hardwareHistorySeconds: Float,
 	val hardwareResetLabels: Int,
 	val hardwarePredictedRateDegPerSec: Float,
 	val hardwareLastLoss: Float,
@@ -65,8 +72,8 @@ object NeuralStayAlignedController {
 		var hidden: FloatArray,
 		val hardware: HardwareYawDriftEstimator = HardwareYawDriftEstimator(),
 		var lastHardwareTemperatureFresh: Boolean = false,
-		val history: ArrayDeque<NeuralYawSequenceSample> = ArrayDeque(),
-		var historyDurationSeconds: Float = 0f,
+		val history: MultiScaleYawHistory =
+			MultiScaleYawHistory(NeuralYawGruModel.FEATURE_COUNT),
 		var lastSampleNanos: Long = 0L,
 		var lastResetNanos: Long = 0L,
 		var previousYawRad: Float? = null,
@@ -154,6 +161,8 @@ object NeuralStayAlignedController {
 				dtSeconds = dt,
 				historyLimit = config.historySamples,
 				temperatureUpdateNanos = if (state.lastHardwareTemperatureFresh) tempStamp else 0L,
+				chunkSize = config.historyChunkSize,
+				recentSamples = config.recentDetailedSamples,
 			)
 		} else {
 			state.lastHardwareTemperatureFresh = false
@@ -168,17 +177,12 @@ object NeuralStayAlignedController {
 		state.samplesSeen++
 		totalSamples++
 
-		val historyLimit = config.historySamples.coerceIn(100, 5000)
-		state.history.addLast(
-			NeuralYawSequenceSample(
-				features = features,
-				dtSeconds = dt,
-			),
+		state.history.add(
+			sample = NeuralYawSequenceSample(features, dt),
+			capacity = config.historySamples,
+			chunkSize = config.historyChunkSize,
+			recentSamples = config.recentDetailedSamples,
 		)
-		state.historyDurationSeconds += dt
-		while (state.history.size > historyLimit) {
-			state.historyDurationSeconds -= state.history.removeFirst().dtSeconds
-		}
 
 		val confidence = confidenceFor(state.supervisionEvents)
 		state.lastConfidence = confidence
@@ -254,7 +258,7 @@ object NeuralStayAlignedController {
 
 		val intervalSeconds =
 			if (state.lastResetNanos == 0L) {
-				state.historyDurationSeconds
+				state.history.durationSeconds
 			} else {
 				((nowNanos - state.lastResetNanos).toDouble() / 1_000_000_000.0)
 					.toFloat()
@@ -263,49 +267,40 @@ object NeuralStayAlignedController {
 		val shouldTrain =
 			config.enabled &&
 				config.learnFromYawResets &&
-				state.history.isNotEmpty() &&
+				!state.history.isEmpty &&
 				intervalSeconds >=
 				config.minimumResetIntervalSeconds.coerceIn(1f, 600f) &&
 				abs(correctionDeg) <=
 				config.maxResetSupervisionDeg.coerceIn(1f, 180f)
 
 		if (shouldTrain) {
-			// If the reset interval is longer than the retained compact history,
-			// supervise only the approximate fraction represented by this window.
-			// This keeps memory bounded without pretending that discarded history
-			// is still available for BPTT.
-			val representedFraction =
-				if (intervalSeconds <= 1e-4f) {
-					1f
-				} else {
-					(state.historyDurationSeconds / intervalSeconds)
-						.coerceIn(0.05f, 1f)
-				}
-			val targetForWindow = correctionDeg * representedFraction
+			// Compressed older capsules cover the COMPLETE observed interval.
+			// No guessed "retainedFraction" scaling of the reset label.
+			val targetForWindow = correctionDeg
 
 			// Both independent models use the same trusted reset angle, but
 			// train separate weights. No reset correction is double-added.
 			val hardwareDuration = state.hardware.historyDurationSeconds
 			if (config.hardwareLearningEnabled &&
-				state.hardware.historySize > 0 &&
-				hardwareDuration >= minOf(5f, intervalSeconds * 0.25f)
+				state.hardware.historicalRawEquivalentSamples > 0L &&
+				hardwareDuration >= intervalSeconds - 2f / config.sampleRateHz.coerceAtLeast(1f)
 			) {
-				// Hardware may have been enabled midway through the reset
-				// interval. Its own coverage determines its own target.
-				val hardwareFraction =
-					(hardwareDuration / intervalSeconds.coerceAtLeast(0.001f))
-						.coerceIn(0f, 1f)
+				// Reject partial-window labels: if the hardware stage was only
+				// enabled midway, the reset angle covers time it never observed.
+				// We do not invent the missing part of the history.
 				state.hardware.learnFromReset(
-					targetCorrectionDeg = correctionDeg * hardwareFraction,
+					targetCorrectionDeg = correctionDeg,
 					learningRate = config.learningRate,
+					chunkSize = config.historyChunkSize,
 				)
 			}
 
 			val result = model.trainSequence(
-				samples = state.history.toList(),
+				samples = state.history.trainingSequence(),
 				targetCorrectionDeg = targetForWindow,
 				learningRate = config.learningRate,
 				deviceBias = state.deviceBias,
+				chunkSize = config.historyChunkSize,
 			)
 
 			state.deviceBias = result.deviceBias
@@ -348,7 +343,11 @@ object NeuralStayAlignedController {
 						trackerName = it.trackerName,
 						bodyPosition = it.trackerPosition?.name ?: "UNASSIGNED",
 						samplesSeen = it.samplesSeen,
-						historySize = it.history.size,
+						historySize = it.history.detailedSamples,
+						historyRawEquivalentSamples = it.history.rawEquivalentSamples,
+						historyCompressedCapsules = it.history.archivedCapsules,
+						historyReplayTokens = it.history.replayTokens,
+						historySeconds = it.history.durationSeconds,
 						supervisionEvents = it.supervisionEvents,
 						predictedRateDegPerSec = it.lastPredictedRateDegPerSec,
 						appliedRateDegPerSec = it.lastAppliedRateDegPerSec,
@@ -358,6 +357,11 @@ object NeuralStayAlignedController {
 						lastLoss = it.lastLoss,
 						hardwareSamplesSeen = it.hardware.samplesSeen,
 						hardwareHistorySize = it.hardware.historySize,
+						hardwareRawEquivalentSamples =
+							it.hardware.historicalRawEquivalentSamples,
+						hardwareCompressedCapsules = it.hardware.compressedHistoryCapsules,
+						hardwareReplayTokens = it.hardware.replayTokens,
+						hardwareHistorySeconds = it.hardware.historyDurationSeconds,
 						hardwareResetLabels = it.hardware.resetLabels,
 						hardwarePredictedRateDegPerSec = it.hardware.predictedRateDegPerSec,
 						hardwareLastLoss = it.hardware.lastLoss,
@@ -497,7 +501,6 @@ object NeuralStayAlignedController {
 		state.hardware.resetTemporal()
 		state.lastHardwareTemperatureFresh = false
 		state.history.clear()
-		state.historyDurationSeconds = 0f
 		state.previousYawRad = null
 		state.lastSampleNanos = 0L
 		state.lastResetNanos = nowNanos
