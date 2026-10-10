@@ -30,6 +30,7 @@ class HardwareYawDriftEstimator {
     private var previousYaw: Float? = null
     private var previousAccelMagnitude: Float? = null
     private var previousTemperature: Float? = null
+    private var previousTemperatureUpdateNanos: Long = 0L
     private var temperatureBaseline: Float? = null
     private var elapsedSeconds = 0f
 
@@ -62,9 +63,12 @@ class HardwareYawDriftEstimator {
         temperature: Float?,
         dtSeconds: Float,
         historyLimit: Int,
+        temperatureUpdateNanos: Long = 0L,
     ): Float {
         val dt = dtSeconds.coerceIn(1f / 120f, 0.25f)
-        val features = featuresFor(rawRotation, acceleration, temperature, dt)
+        val features = featuresFor(
+            rawRotation, acceleration, temperature, temperatureUpdateNanos, dt,
+        )
         val prediction = network.predict(features, hidden, bias)
         hidden = prediction.hidden
         predictedRateDegPerSec = prediction.rateDegPerSec
@@ -103,6 +107,7 @@ class HardwareYawDriftEstimator {
         previousYaw = null
         previousAccelMagnitude = null
         previousTemperature = null
+        previousTemperatureUpdateNanos = 0L
         temperatureBaseline = null
         temperatureCelsius = null
         temperatureRateCelsiusPerSecond = 0f
@@ -114,6 +119,7 @@ class HardwareYawDriftEstimator {
         rotation: Quaternion,
         acceleration: Vector3?,
         temperature: Float?,
+        temperatureUpdateNanos: Long,
         dt: Float,
     ): FloatArray {
         val f = FloatArray(FEATURE_COUNT)
@@ -156,10 +162,24 @@ class HardwareYawDriftEstimator {
         temperatureCelsius = validTemp
         if (validTemp != null) {
             if (temperatureBaseline == null) temperatureBaseline = validTemp
-            val rate = previousTemperature?.let {
-                ((validTemp - it) / dt).coerceIn(-20f, 20f)
-            } ?: 0f
-            temperatureRateCelsiusPerSecond = rate
+            // Temperature packets arrive far less often than pose samples.
+            // Differentiate between actual packet timestamps, not neural dt.
+            val newPacket = temperatureUpdateNanos > 0L &&
+                temperatureUpdateNanos != previousTemperatureUpdateNanos
+            if (newPacket) {
+                val packetDt = if (previousTemperatureUpdateNanos > 0L) {
+                    ((temperatureUpdateNanos - previousTemperatureUpdateNanos).toDouble() /
+                        1_000_000_000.0).toFloat()
+                } else 0f
+                temperatureRateCelsiusPerSecond =
+                    if (packetDt > 0.05f && previousTemperature != null) {
+                        ((validTemp - previousTemperature!!) / packetDt)
+                            .coerceIn(-20f, 20f)
+                    } else 0f
+                previousTemperature = validTemp
+                previousTemperatureUpdateNanos = temperatureUpdateNanos
+            }
+            val rate = temperatureRateCelsiusPerSecond
             f[11] = ((validTemp - 25f) / 40f).coerceIn(-1f, 1f)
             f[12] = ((validTemp - (temperatureBaseline ?: validTemp)) / 20f)
                 .coerceIn(-1f, 1f)
@@ -167,10 +187,9 @@ class HardwareYawDriftEstimator {
             f[14] = 1f
         } else {
             previousTemperature = null
+            previousTemperatureUpdateNanos = 0L
             temperatureRateCelsiusPerSecond = 0f
         }
-        previousTemperature = validTemp
-
         elapsedSeconds += dt
         f[15] = (elapsedSeconds / 600f).coerceIn(0f, 1f)
         return f
