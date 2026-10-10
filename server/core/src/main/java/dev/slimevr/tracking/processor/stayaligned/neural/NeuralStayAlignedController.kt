@@ -34,6 +34,7 @@ data class NeuralStayAlignedDeviceStatus(
 	val lastResetCorrectionDeg: Float,
 	val lastTrainingTargetDeg: Float,
 	val lastLoss: Float,
+	val lastTrainingMilliseconds: Float,
 	val hardwareSamplesSeen: Long,
 	val hardwareHistorySize: Int,
 	val hardwareRawEquivalentSamples: Long,
@@ -43,6 +44,7 @@ data class NeuralStayAlignedDeviceStatus(
 	val hardwareResetLabels: Int,
 	val hardwarePredictedRateDegPerSec: Float,
 	val hardwareLastLoss: Float,
+	val hardwareLastTrainingMilliseconds: Float,
 	val hardwareLastErrorDeg: Float,
 	val hardwareConfidence: Float,
 	val hardwareTemperatureCelsius: Float?,
@@ -86,6 +88,7 @@ object NeuralStayAlignedController {
 		var lastResetCorrectionDeg: Float = 0f,
 		var lastTrainingTargetDeg: Float = 0f,
 		var lastLoss: Float = 0f,
+		var lastTrainingMilliseconds: Float = 0f,
 	)
 
 	private val model = NeuralYawGruModel()
@@ -301,6 +304,7 @@ object NeuralStayAlignedController {
 				)
 			}
 
+			val trainStart = System.nanoTime()
 			val result = model.trainSequence(
 				samples = state.history.trainingSequence(),
 				targetCorrectionDeg = targetForWindow,
@@ -309,6 +313,8 @@ object NeuralStayAlignedController {
 				chunkSize = config.historyChunkSize,
 			)
 
+			state.lastTrainingMilliseconds =
+				((System.nanoTime() - trainStart).toDouble() / 1_000_000.0).toFloat()
 			state.deviceBias = result.deviceBias
 			state.supervisionEvents++
 			totalSupervisionEvents++
@@ -361,6 +367,7 @@ object NeuralStayAlignedController {
 						lastResetCorrectionDeg = it.lastResetCorrectionDeg,
 						lastTrainingTargetDeg = it.lastTrainingTargetDeg,
 						lastLoss = it.lastLoss,
+						lastTrainingMilliseconds = it.lastTrainingMilliseconds,
 						hardwareSamplesSeen = it.hardware.samplesSeen,
 						hardwareHistorySize = it.hardware.historySize,
 						hardwareRawEquivalentSamples =
@@ -371,6 +378,8 @@ object NeuralStayAlignedController {
 						hardwareResetLabels = it.hardware.resetLabels,
 						hardwarePredictedRateDegPerSec = it.hardware.predictedRateDegPerSec,
 						hardwareLastLoss = it.hardware.lastLoss,
+						hardwareLastTrainingMilliseconds =
+							it.hardware.lastTrainingMilliseconds,
 						hardwareLastErrorDeg = it.hardware.lastPredictionErrorDeg,
 						hardwareConfidence = it.hardware.confidence,
 						hardwareTemperatureCelsius = it.hardware.temperatureCelsius,
