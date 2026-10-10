@@ -132,7 +132,7 @@ arrive seconds after the previous one. Treating that as a 50 ms derivative
 would exaggerate heating/cooling by orders of magnitude.
 
 The hardware-only model uses the existing small reset-supervised
-`NeuralYawGruModel` implementation with a 16-input, 12-hidden-unit GRU.
+`NeuralYawGruModel` implementation with a 16-input, 24-hidden-unit GRU.
 A soft yaw reset trains the integral of its local predicted drift rates over
 its bounded temporal history against the same signed reset correction used to
 train the cross-skeleton model.
@@ -303,35 +303,79 @@ The current feature packet contains:
 Relative yaw is represented using sin/cos pairs rather than a raw degree value
 so the network does not see a discontinuity at +/-180 degrees.
 
-### Bounded history
+### Multi-scale motion history: 50k+ samples without 50k BPTT steps
 
-Each physical sensor owns a bounded compact history.
+Both the individual 16-feature hardware GRUs and the existing 32-feature
+cross-skeleton GRU now retain a **multi-scale reset interval** instead of
+blindly discarding its oldest samples.
 
-Default settings:
-
-```text
-history samples: 1500
-sample rate:     20 Hz
-```
-
-which gives approximately:
+Default configuration:
 
 ```text
-75 seconds
+history resolution budget     50,000 original sample equivalents
+recent exact samples           1,024
+compressed block size             64
+sample rate                      20 Hz
+training BPTT chunk size           64
 ```
 
-of retained temporal credit assignment per physical sensor.
+At 20 Hz, 50,000 original samples represent approximately 41.7 minutes.
+The feature sets actually contain **16 hardware features and 32 skeleton
+features**, respectively—not 7-9. A 50k uncompressed Float32 buffer would be
+about 3.2 MB or 6.4 MB of feature values per branch/device respectively,
+before JVM object/array overhead. Large history is therefore quite practical
+to *store*, while 50k-step backpropagation is a different and more expensive
+problem.
 
-The history can be configured from:
+The new `MultiScaleYawHistory` has two temporal resolutions:
 
 ```text
-100 .. 5000 samples
-5 .. 60 Hz
+OLDER MOTION                                      NOW
+   |                                               |
+   +--> ordered FIRST / WEIGHTED MEAN / LAST        |
+        64-sample capsules                         |
+        |                                          |
+        +--> merge adjacent oldest capsules        |
+             when the archive reaches its          |
+             resolution budget                     |
+                                                [1024 exact]
 ```
 
-When the ring buffer is full, the oldest compact sample is discarded.
+A capsule retains its first feature vector, last feature vector,
+time-weighted feature sums, elapsed duration, and original sample count.
+The original duration and temporal boundaries survive even when adjacent
+older capsules merge. This preserves **coarse evidence**, not every
+individual motion transition: compression is approximate, and details
+within old capsules cannot be reconstructed.
 
-Raw sensor streams are not accumulated indefinitely.
+During reset replay, each old capsule becomes three ordered training tokens
+(first/mean/last). The last `recentDetailedSamples` full-resolution tokens
+follow them. With a 50k history, replay is typically a few thousand GRU
+tokens rather than 50k recurrent steps.
+
+If the reset interval becomes longer than the nominal 50k resolution budget,
+the oldest capsules merge again instead of discarding time. This gives a
+gracefully coarsening long-term memory rather than a hard 42-minute cutoff.
+
+### Checkpointed 32/64-token GRU training
+
+The neural training method now supports a configured BPTT chunk of 32 or 64
+tokens. It first performs a lightweight forward pass and retains a recurrent
+hidden-state checkpoint at every chunk boundary. During backpropagation, it
+recomputes the internal states of one chunk at a time and propagates the
+hidden-state derivative into the previous chunk.
+
+This bounds the stored internal GRU training states to a chunk instead of
+the full replay length. **The gradient is exact through the compressed replay
+sequence**, with the normal limitations of floating-point arithmetic. It is
+not exact through the original sequence because old intervals have already
+been summarized.
+
+The hard correction-rate limiter and motion protection are unchanged.
+The more capable 24-hidden-unit hardware-only GRU remains isolated per device;
+the existing shared skeleton GRU retains its proven 16 hidden units.
+Training remains triggered by reset events rather than executed for every
+pose frame.
 
 ### Soft yaw resets as supervision
 
@@ -391,25 +435,23 @@ This means the reset applies gradient pressure back into the earlier states that
 actually contributed to the prediction instead of manually dividing one reset
 angle equally across every sample.
 
-### Bounded long-reset approximation
+### Full-interval supervision, without truncated-label scaling
 
-A user may go longer between resets than the configured retained history.
+The old approximation scaled the signed reset label by
+`recentWindowSeconds / fullResetIntervalSeconds`. This has been removed.
+The multi-scale replay now covers the entire observed interval since the last
+soft yaw reset, using detailed recent samples and compressed old evidence.
+The original **full signed reset correction** is the loss target.
 
-In that case, the model does not pretend discarded samples still exist.
+The training still needs trustworthy data. If observed sample time does not
+cover at least 80% of the actual interval, it rejects the reset as a training
+event rather than inventing missing motion evidence. Similarly, a hardware
+stage enabled midway through the reset interval does not receive a made-up
+partial label. It waits for a fully observed interval.
 
-The reset target applied to the retained window is scaled by:
-
-```text
-retained_history_duration
--------------------------
-full_reset_interval
-```
-
-with a small lower bound.
-
-This is intentionally a first bounded-memory approximation. A later version can
-replace it with chunk-level recurrent credit summaries or eligibility traces
-without changing the reset-supervision interface.
+This is a substantial improvement in long-horizon credit assignment, but it
+does **not** amount to lossless 50k-step BPTT: the oldest motion patterns are
+represented through coarse temporal capsules.
 
 ### Per-device adapter
 
@@ -524,7 +566,9 @@ The fourth Custom IK tab exposes:
 - hard maximum correction rate,
 - confidence threshold,
 - intentional-motion protection,
-- history sample count,
+- up-to-50k history resolution budget,
+- recent exact sample count,
+- compressed history/BPTT chunk size (32 or 64),
 - feature sample rate,
 - learning rate,
 - minimum reset interval,
