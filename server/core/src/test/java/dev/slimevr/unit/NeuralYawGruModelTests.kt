@@ -73,6 +73,42 @@ class NeuralYawGruModelTests {
 	}
 
 	@Test
+	fun checkpointedChunksProduceEquivalentUpdates() {
+		val samples = List(192) { index ->
+			NeuralYawSequenceSample(
+				FloatArray(NeuralYawGruModel.FEATURE_COUNT) { axis ->
+					((index % 11) - 5).toFloat() * (axis + 1) * 0.003f
+				},
+				0.05f,
+			)
+		}
+		val model32 = NeuralYawGruModel(seed = 887L)
+		val model64 = NeuralYawGruModel(seed = 887L)
+
+		val result32 = model32.trainSequence(
+			samples = samples,
+			targetCorrectionDeg = 0.7f,
+			learningRate = 0.0005f,
+			deviceBias = 0f,
+			chunkSize = 32,
+		)
+		val result64 = model64.trainSequence(
+			samples = samples,
+			targetCorrectionDeg = 0.7f,
+			learningRate = 0.0005f,
+			deviceBias = 0f,
+			chunkSize = 64,
+		)
+
+		assertTrue(abs(result32.loss - result64.loss) < 1e-3f)
+		assertTrue(abs(result32.deviceBias - result64.deviceBias) < 1e-3f)
+		assertTrue(
+			abs(integratedPrediction(model32, samples, result32.deviceBias) -
+				integratedPrediction(model64, samples, result64.deviceBias)) < 1e-3f,
+		)
+	}
+
+	@Test
 	fun oppositeResetLabelsMovePredictionInOppositeDirections() {
 		val positiveModel = NeuralYawGruModel(seed = 77L)
 		val negativeModel = NeuralYawGruModel(seed = 77L)
