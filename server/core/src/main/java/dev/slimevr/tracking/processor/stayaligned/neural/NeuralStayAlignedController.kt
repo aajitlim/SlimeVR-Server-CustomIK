@@ -134,10 +134,6 @@ object NeuralStayAlignedController {
 					.coerceIn(1f / 120f, 0.25f)
 			}
 
-		val features = buildFeatures(tracker, trackers, state, dt)
-		val prediction = model.predict(features, state.hidden, state.deviceBias)
-		state.hidden = prediction.hidden
-
 		// FIRST STAGE: own-sensor rotation / acceleration / fresh temperature.
 		// No anatomical neighbors are passed into the hardware estimator.
 		var hardwareRate = 0f
@@ -163,6 +159,11 @@ object NeuralStayAlignedController {
 			state.lastHardwareTemperatureFresh = false
 			state.hardware.resetTemporal()
 		}
+
+		// SECOND STAGE: preserve the already-trained cross-skeleton network.
+		val features = buildFeatures(tracker, trackers, state, dt)
+		val prediction = model.predict(features, state.hidden, state.deviceBias)
+		state.hidden = prediction.hidden
 		state.lastPredictedRateDegPerSec = prediction.rateDegPerSec
 		state.samplesSeen++
 		totalSamples++
@@ -284,9 +285,18 @@ object NeuralStayAlignedController {
 
 			// Both independent models use the same trusted reset angle, but
 			// train separate weights. No reset correction is double-added.
-			if (config.hardwareLearningEnabled && state.hardware.historySize > 0) {
+			val hardwareDuration = state.hardware.historyDurationSeconds
+			if (config.hardwareLearningEnabled &&
+				state.hardware.historySize > 0 &&
+				hardwareDuration >= minOf(5f, intervalSeconds * 0.25f)
+			) {
+				// Hardware may have been enabled midway through the reset
+				// interval. Its own coverage determines its own target.
+				val hardwareFraction =
+					(hardwareDuration / intervalSeconds.coerceAtLeast(0.001f))
+						.coerceIn(0f, 1f)
 				state.hardware.learnFromReset(
-					targetCorrectionDeg = targetForWindow,
+					targetCorrectionDeg = correctionDeg * hardwareFraction,
 					learningRate = config.learningRate,
 				)
 			}
