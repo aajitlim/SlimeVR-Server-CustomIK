@@ -31,6 +31,16 @@ data class NeuralStayAlignedDeviceStatus(
 	val lastResetCorrectionDeg: Float,
 	val lastTrainingTargetDeg: Float,
 	val lastLoss: Float,
+	val hardwareSamplesSeen: Long,
+	val hardwareHistorySize: Int,
+	val hardwareResetLabels: Int,
+	val hardwarePredictedRateDegPerSec: Float,
+	val hardwareLastLoss: Float,
+	val hardwareLastErrorDeg: Float,
+	val hardwareConfidence: Float,
+	val hardwareTemperatureCelsius: Float?,
+	val hardwareTemperatureRateCelsiusPerSec: Float,
+	val hardwareTemperatureFresh: Boolean,
 )
 
 data class NeuralStayAlignedStatus(
@@ -53,6 +63,8 @@ object NeuralStayAlignedController {
 		var trackerName: String,
 		var trackerPosition: TrackerPosition?,
 		var hidden: FloatArray,
+		val hardware: HardwareYawDriftEstimator = HardwareYawDriftEstimator(),
+		var lastHardwareTemperatureFresh: Boolean = false,
 		val history: ArrayDeque<NeuralYawSequenceSample> = ArrayDeque(),
 		var historyDurationSeconds: Float = 0f,
 		var lastSampleNanos: Long = 0L,
@@ -125,6 +137,32 @@ object NeuralStayAlignedController {
 		val features = buildFeatures(tracker, trackers, state, dt)
 		val prediction = model.predict(features, state.hidden, state.deviceBias)
 		state.hidden = prediction.hidden
+
+		// FIRST STAGE: own-sensor rotation / acceleration / fresh temperature.
+		// No anatomical neighbors are passed into the hardware estimator.
+		var hardwareRate = 0f
+		if (config.hardwareLearningEnabled) {
+			val tempStamp = tracker.temperatureLastUpdatedNanos
+			val maxAge = config.hardwareTemperatureMaxAgeSeconds
+				.coerceIn(1f, 600f)
+			val temperatureIsFresh = tempStamp > 0L &&
+				nowNanos >= tempStamp &&
+				(nowNanos - tempStamp).toDouble() / 1_000_000_000.0 <= maxAge
+			state.lastHardwareTemperatureFresh = temperatureIsFresh &&
+				tracker.temperature?.isFinite() == true
+			val accel = if (tracker.hasAcceleration) tracker.getAcceleration() else null
+			hardwareRate = state.hardware.sample(
+				rawRotation = tracker.getRawRotation(),
+				acceleration = accel,
+				temperature = if (state.lastHardwareTemperatureFresh) tracker.temperature else null,
+				dtSeconds = dt,
+				historyLimit = config.historySamples,
+				temperatureUpdateNanos = if (state.lastHardwareTemperatureFresh) tempStamp else 0L,
+			)
+		} else {
+			state.lastHardwareTemperatureFresh = false
+			state.hardware.resetTemporal()
+		}
 		state.lastPredictedRateDegPerSec = prediction.rateDegPerSec
 		state.samplesSeen++
 		totalSamples++
@@ -150,9 +188,18 @@ object NeuralStayAlignedController {
 			tracker.magStatus != MagnetometerStatus.ENABLED
 		) {
 			val maxRate = config.maxCorrectionRateDegPerSec.coerceIn(0f, 3f)
+			// Optional convex combination, NEVER sum two independent predictions.
+			// The proven skeleton GRU remains authoritative by default.
+			val blend =
+				if (config.hardwareLearningEnabled && config.hardwareFusionEnabled) {
+					config.hardwareBlend.coerceIn(0f, 1f) *
+						state.hardware.confidence
+				} else 0f
+			val fusedRate =
+				prediction.rateDegPerSec * (1f - blend) +
+					hardwareRate * blend
 			val requestedRate =
-				(prediction.rateDegPerSec *
-					config.correctionStrength.coerceIn(0f, 1f))
+				(fusedRate * config.correctionStrength.coerceIn(0f, 1f))
 					.coerceIn(-maxRate, maxRate)
 
 			val angularSpeedDeg =
@@ -232,6 +279,15 @@ object NeuralStayAlignedController {
 				}
 			val targetForWindow = correctionDeg * representedFraction
 
+			// Both independent models use the same trusted reset angle, but
+			// train separate weights. No reset correction is double-added.
+			if (config.hardwareLearningEnabled && state.hardware.historySize > 0) {
+				state.hardware.learnFromReset(
+					targetCorrectionDeg = targetForWindow,
+					learningRate = config.learningRate,
+				)
+			}
+
 			val result = model.trainSequence(
 				samples = state.history.toList(),
 				targetCorrectionDeg = targetForWindow,
@@ -287,6 +343,17 @@ object NeuralStayAlignedController {
 						lastResetCorrectionDeg = it.lastResetCorrectionDeg,
 						lastTrainingTargetDeg = it.lastTrainingTargetDeg,
 						lastLoss = it.lastLoss,
+						hardwareSamplesSeen = it.hardware.samplesSeen,
+						hardwareHistorySize = it.hardware.historySize,
+						hardwareResetLabels = it.hardware.resetLabels,
+						hardwarePredictedRateDegPerSec = it.hardware.predictedRateDegPerSec,
+						hardwareLastLoss = it.hardware.lastLoss,
+						hardwareLastErrorDeg = it.hardware.lastPredictionErrorDeg,
+						hardwareConfidence = it.hardware.confidence,
+						hardwareTemperatureCelsius = it.hardware.temperatureCelsius,
+						hardwareTemperatureRateCelsiusPerSec =
+							it.hardware.temperatureRateCelsiusPerSecond,
+						hardwareTemperatureFresh = it.lastHardwareTemperatureFresh,
 					)
 				}
 				.sortedBy { it.bodyPosition }
@@ -414,6 +481,8 @@ object NeuralStayAlignedController {
 		nowNanos: Long,
 	) {
 		state.hidden = model.newHidden()
+		state.hardware.resetTemporal()
+		state.lastHardwareTemperatureFresh = false
 		state.history.clear()
 		state.historyDurationSeconds = 0f
 		state.previousYawRad = null
