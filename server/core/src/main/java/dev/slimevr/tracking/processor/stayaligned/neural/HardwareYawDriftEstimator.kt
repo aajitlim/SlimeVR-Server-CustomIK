@@ -47,6 +47,8 @@ class HardwareYawDriftEstimator {
         private set
     var lastLoss: Float = 0f
         private set
+    var lastTrainingMilliseconds: Float = 0f
+        private set
     var lastPredictionErrorDeg: Float = 0f
         private set
     var lastPredictionDeg: Float = 0f
@@ -101,6 +103,7 @@ class HardwareYawDriftEstimator {
         chunkSize: Int = 64,
     ) {
         if (history.isEmpty || !targetCorrectionDeg.isFinite()) return
+        val trainStart = System.nanoTime()
         val result = network.trainSequence(
             samples = history.trainingSequence(),
             targetCorrectionDeg = targetCorrectionDeg,
@@ -108,6 +111,8 @@ class HardwareYawDriftEstimator {
             deviceBias = bias,
             chunkSize = chunkSize,
         )
+        lastTrainingMilliseconds =
+            ((System.nanoTime() - trainStart).toDouble() / 1_000_000.0).toFloat()
         bias = result.deviceBias
         resetLabels++
         lastLoss = result.loss
