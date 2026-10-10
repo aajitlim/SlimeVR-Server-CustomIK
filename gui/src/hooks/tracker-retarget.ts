@@ -92,6 +92,10 @@ export type TrackerRetargetConfig = {
   neuralStayAlignedLearningRate: number;
   neuralStayAlignedMinimumResetIntervalSeconds: number;
   neuralStayAlignedMaxResetSupervisionDeg: number;
+  neuralHardwareLearningEnabled: boolean;
+  neuralHardwareFusionEnabled: boolean;
+  neuralHardwareBlend: number;
+  neuralHardwareTemperatureMaxAgeSeconds: number;
   trackers: Record<TrackerRetargetRole, TrackerRetargetAdjustment>;
   springBones: Record<TrackerRetargetRole, TrackerSpringBoneAdjustment>;
   boneComplianceSegments: Record<
@@ -113,6 +117,16 @@ export type NeuralStayAlignedDeviceStatus = {
   lastResetCorrectionDeg: number;
   lastTrainingTargetDeg: number;
   lastLoss: number;
+  hardwareSamplesSeen: number;
+  hardwareHistorySize: number;
+  hardwareResetLabels: number;
+  hardwarePredictedRateDegPerSec: number;
+  hardwareLastLoss: number;
+  hardwareLastErrorDeg: number;
+  hardwareConfidence: number;
+  hardwareTemperatureCelsius: number | null;
+  hardwareTemperatureRateCelsiusPerSec: number;
+  hardwareTemperatureFresh: boolean;
 };
 
 export type NeuralStayAlignedRuntimeStatus = {
@@ -242,6 +256,10 @@ export const makeDefaultTrackerRetargetConfig = (): TrackerRetargetConfig => ({
   neuralStayAlignedLearningRate: 0.0005,
   neuralStayAlignedMinimumResetIntervalSeconds: 15,
   neuralStayAlignedMaxResetSupervisionDeg: 45,
+  neuralHardwareLearningEnabled: false,
+  neuralHardwareFusionEnabled: false,
+  neuralHardwareBlend: 0.25,
+  neuralHardwareTemperatureMaxAgeSeconds: 90,
   trackers: Object.fromEntries(
     RETARGET_ROLES.map((role) => [role, defaultAdjustment()])
   ) as Record<TrackerRetargetRole, TrackerRetargetAdjustment>,
@@ -326,6 +344,44 @@ function normalizeNeuralStayAlignedStatus(
           0
         ),
         lastLoss: Math.max(0, finiteNumber(device.lastLoss, 0)),
+        hardwareSamplesSeen: Math.max(
+          0,
+          finiteNumber(device.hardwareSamplesSeen, 0)
+        ),
+        hardwareHistorySize: Math.max(
+          0,
+          finiteNumber(device.hardwareHistorySize, 0)
+        ),
+        hardwareResetLabels: Math.max(
+          0,
+          finiteNumber(device.hardwareResetLabels, 0)
+        ),
+        hardwarePredictedRateDegPerSec: finiteNumber(
+          device.hardwarePredictedRateDegPerSec,
+          0
+        ),
+        hardwareLastLoss: Math.max(
+          0,
+          finiteNumber(device.hardwareLastLoss, 0)
+        ),
+        hardwareLastErrorDeg: Math.max(
+          0,
+          finiteNumber(device.hardwareLastErrorDeg, 0)
+        ),
+        hardwareConfidence: Math.min(
+          1,
+          Math.max(0, finiteNumber(device.hardwareConfidence, 0))
+        ),
+        hardwareTemperatureCelsius:
+          typeof device.hardwareTemperatureCelsius === 'number' &&
+          Number.isFinite(device.hardwareTemperatureCelsius)
+            ? device.hardwareTemperatureCelsius
+            : null,
+        hardwareTemperatureRateCelsiusPerSec: finiteNumber(
+          device.hardwareTemperatureRateCelsiusPerSec,
+          0
+        ),
+        hardwareTemperatureFresh: device.hardwareTemperatureFresh === true,
       }))
     : [];
 
@@ -683,6 +739,31 @@ export function normalizeTrackerRetargetConfig(
         )
       )
     ),
+    neuralHardwareLearningEnabled:
+      typeof message.neuralHardwareLearningEnabled === 'boolean'
+        ? message.neuralHardwareLearningEnabled
+        : defaults.neuralHardwareLearningEnabled,
+    neuralHardwareFusionEnabled:
+      typeof message.neuralHardwareFusionEnabled === 'boolean'
+        ? message.neuralHardwareFusionEnabled
+        : defaults.neuralHardwareFusionEnabled,
+    neuralHardwareBlend: Math.min(
+      1,
+      Math.max(
+        0,
+        finiteNumber(message.neuralHardwareBlend, defaults.neuralHardwareBlend)
+      )
+    ),
+    neuralHardwareTemperatureMaxAgeSeconds: Math.min(
+      600,
+      Math.max(
+        1,
+        finiteNumber(
+          message.neuralHardwareTemperatureMaxAgeSeconds,
+          defaults.neuralHardwareTemperatureMaxAgeSeconds
+        )
+      )
+    ),
     trackers,
     springBones,
     boneComplianceSegments,
@@ -764,6 +845,11 @@ export function useTrackerRetargeting() {
         normalized.neuralStayAlignedMinimumResetIntervalSeconds,
       neuralStayAlignedMaxResetSupervisionDeg:
         normalized.neuralStayAlignedMaxResetSupervisionDeg,
+      neuralHardwareLearningEnabled: normalized.neuralHardwareLearningEnabled,
+      neuralHardwareFusionEnabled: normalized.neuralHardwareFusionEnabled,
+      neuralHardwareBlend: normalized.neuralHardwareBlend,
+      neuralHardwareTemperatureMaxAgeSeconds:
+        normalized.neuralHardwareTemperatureMaxAgeSeconds,
       trackers: normalized.trackers,
       springBones: normalized.springBones,
       boneComplianceSegments: normalized.boneComplianceSegments,
