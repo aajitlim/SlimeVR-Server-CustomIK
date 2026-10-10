@@ -195,9 +195,12 @@ object NeuralStayAlignedController {
 					config.hardwareBlend.coerceIn(0f, 1f) *
 						state.hardware.confidence
 				} else 0f
-			val fusedRate =
-				prediction.rateDegPerSec * (1f - blend) +
-					hardwareRate * blend
+			val fusedRate = HardwareYawFusion.blend(
+				skeletonRate = prediction.rateDegPerSec,
+				hardwareRate = hardwareRate,
+				maximumBlend = blend,
+				hardwareMaturity = 1f,
+			)
 			val requestedRate =
 				(fusedRate * config.correctionStrength.coerceIn(0f, 1f))
 					.coerceIn(-maxRate, maxRate)
